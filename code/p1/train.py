@@ -7,14 +7,14 @@ from parameters import *
 
 
 # create these folders if they does not exist
-if not os.path.isdir("results"):
-    os.mkdir("results")
+if not os.path.isdir("p1/results"):
+    os.mkdir("p1/results")
 
-if not os.path.isdir("logs"):
-    os.mkdir("logs")
+if not os.path.isdir("p1/logs"):
+    os.mkdir("p1/logs")
 
-if not os.path.isdir("data"):
-    os.mkdir("data")
+if not os.path.isdir("p1/data"):
+    os.mkdir("p1/data")
 
 # load the data
 data = load_data(ticker, N_STEPS, scale=SCALE, split_by_date=SPLIT_BY_DATE, 
@@ -29,8 +29,8 @@ model = create_model(N_STEPS, len(FEATURE_COLUMNS), loss=LOSS, units=UNITS, cell
                     dropout=DROPOUT, optimizer=OPTIMIZER, bidirectional=BIDIRECTIONAL)
 
 # some tensorflow callbacks
-checkpointer = ModelCheckpoint(os.path.join("results", model_name + ".weights.h5"), save_weights_only=True, save_best_only=True, verbose=1)
-tensorboard = TensorBoard(log_dir=os.path.join("logs", model_name))
+checkpointer = ModelCheckpoint(os.path.join("p1", "results", model_name + ".weights.h5"), save_weights_only=True, save_best_only=True, verbose=1)
+tensorboard = TensorBoard(log_dir=os.path.join("p1", "logs", model_name))
 # train the model and save the weights whenever we see 
 # a new optimal model using ModelCheckpoint
 history = model.fit(data["X_train"], data["y_train"],

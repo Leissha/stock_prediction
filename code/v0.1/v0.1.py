@@ -16,6 +16,7 @@
 # pip install pandas-datareader
 # pip install yfinance
 
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -26,6 +27,7 @@ import tensorflow as tf
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, LSTM, InputLayer
+from loguru import logger
 
 #------------------------------------------------------------------------------
 # Load Data
@@ -35,10 +37,19 @@ from tensorflow.keras.layers import Dense, Dropout, LSTM, InputLayer
 # If not, save the data into a directory
 #------------------------------------------------------------------------------
 # DATA_SOURCE = "yahoo"
-COMPANY = 'CBA.AX'
+# COMPANY = 'CBA.AX'
+# TRAIN_START = '2020-01-01'     # Start date to read
+# TRAIN_END = '2023-08-01'       # End date to read
 
-TRAIN_START = '2020-01-01'     # Start date to read
-TRAIN_END = '2023-08-01'       # End date to read
+COMPANY = 'AMZN'  # Match P1's company
+
+# Match P1's dynamic date range: last 730 days (2 years) from today
+from datetime import datetime, timedelta
+end_date = datetime.now()
+start_date = end_date - timedelta(days=730)
+TRAIN_START = start_date.strftime('%Y-%m-%d')
+TRAIN_END = end_date.strftime('%Y-%m-%d')
+
 
 # data = web.DataReader(COMPANY, DATA_SOURCE, TRAIN_START, TRAIN_END) # Read data using yahoo
 
@@ -47,7 +58,7 @@ import yfinance as yf
 
 # Get the data for the stock AAPL
 data = yf.download(COMPANY,TRAIN_START,TRAIN_END)
-print("\ndata", data[:3])
+logger.info("\ndata", data[:3])
 #------------------------------------------------------------------------------
 # Prepare Data
 ## To do:
@@ -63,7 +74,7 @@ scaler = MinMaxScaler(feature_range=(0, 1))
 # Note that, by default, feature_range=(0, 1). Thus, if you want a different 
 # feature_range (min,max) then you'll need to specify it here
 scaled_data = scaler.fit_transform(data[PRICE_VALUE].values.reshape(-1, 1)) 
-print("\n2D scaled data", scaled_data[:3])
+logger.info("\n2D scaled data", scaled_data[:3])
 # Flatten and normalise the data
 # First, we reshape a 1D array(n) to 2D array(n,1)
 # We have to do that because sklearn.preprocessing.fit_transform()
@@ -87,7 +98,7 @@ x_train = []
 y_train = []
 
 scaled_data = scaled_data[:,0] # Turn the 2D array back to a 1D array
-print("\n1D scaled data", scaled_data[:3])
+logger.info("\n1D scaled data", scaled_data[:3])
 # Prepare the data
 for x in range(PREDICTION_DAYS, len(scaled_data)):
     x_train.append(scaled_data[x-PREDICTION_DAYS:x])
@@ -97,13 +108,13 @@ for x in range(PREDICTION_DAYS, len(scaled_data)):
 x_train, y_train = np.array(x_train), np.array(y_train)
 # Now, x_train is a 2D array(p,q) where p = len(scaled_data) - PREDICTION_DAYS
 # and q = PREDICTION_DAYS; while y_train is a 1D array(p)
-print("\nx_train", x_train[:3])
-print("\ny_train", y_train[:3])
+logger.info("\nx_train", x_train[:3])
+logger.info("\ny_train", y_train[:3])
 
 x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
 # We now reshape x_train into a 3D array(p, q, 1); Note that x_train 
 # is an array of p inputs with each input being a 2D array 
-print("\nx_train", x_train[:3])
+logger.info("\nx_train", x_train[:3])
 #------------------------------------------------------------------------------
 # Build the Model
 ## TO DO:
@@ -188,29 +199,45 @@ model.fit(x_train, y_train, epochs=25, batch_size=32)
 # Test the model accuracy on existing data
 #------------------------------------------------------------------------------
 # Load the test data
-TEST_START = '2023-08-02'
-TEST_END = '2024-07-02'
+# Add test option to compare with p1
+
+# TEST_START = '2023-08-02'
+# TEST_END = '2024-07-02'
+# Load the test data - P1 uses 20% split, so we'll use the last 20% of the data
+# Calculate test period as last 20% of the total data period
+total_days = 730
+test_days = int(total_days * 0.2)  # 20% for testing
+train_days = total_days - test_days
+
+test_start_date = end_date - timedelta(days=test_days)
+TEST_START = test_start_date.strftime('%Y-%m-%d')
+TEST_END = end_date.strftime('%Y-%m-%d')
 
 # test_data = web.DataReader(COMPANY, DATA_SOURCE, TEST_START, TEST_END)
 
 test_data = yf.download(COMPANY,TEST_START,TEST_END)
 
-print("\ntest_data", test_data[:3])
+logger.info("\ntest_data", test_data[:3])
 
 # The above bug is the reason for the following line of code
 # test_data = test_data[1:]
 
+# v0.1: split train - test then normalize (out of bound values)
+# p1:   normalize before split (training value range leaked)
 actual_prices = test_data[PRICE_VALUE].values
-print("\nactual_prices", actual_prices[:3])
+logger.info("\nactual_prices", actual_prices[:3])
+
 total_dataset = pd.concat((data[PRICE_VALUE], test_data[PRICE_VALUE]), axis=0)
-print("\ntotal_dataset", total_dataset[:3])
+logger.info("\ntotal_dataset", total_dataset[:3])
+
 model_inputs = total_dataset[len(total_dataset) - len(test_data) - PREDICTION_DAYS:].values
 # We need to do the above because to predict the closing price of the fisrt
 # PREDICTION_DAYS of the test period [TEST_START, TEST_END], we'll need the 
 # data from the training period
-print("\nmodel_inputs", model_inputs[:3])
+logger.info("\nmodel_inputs", model_inputs[:3])
+
 model_inputs = model_inputs.reshape(-1, 1)
-print("\nmodel_inputs reshaped", model_inputs[:3])  
+logger.info("\nmodel_inputs reshaped", model_inputs[:3])  
 # TO DO: Explain the above line
 
 model_inputs = scaler.transform(model_inputs)
@@ -236,7 +263,7 @@ for x in range(PREDICTION_DAYS, len(model_inputs)):
 
 x_test = np.array(x_test)
 x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], 1))
-print("\nx_test", x_test[:3])
+logger.info("\nx_test", x_test[:3])
 # TO DO: Explain the above 5 lines
 
 predicted_prices = model.predict(x_test)
@@ -250,7 +277,9 @@ predicted_prices = scaler.inverse_transform(predicted_prices)
 # 2) Chart showing High & Lows of the day
 # 3) Show chart of next few days (predicted)
 #------------------------------------------------------------------------------
+os.makedirs(f"v0.1/results", exist_ok=True)
 
+plot = plt.figure(figsize=(16, 8))
 plt.plot(actual_prices, color="black", label=f"Actual {COMPANY} Price")
 plt.plot(predicted_prices, color="green", label=f"Predicted {COMPANY} Price")
 plt.title(f"{COMPANY} Share Price")
@@ -258,6 +287,7 @@ plt.xlabel("Time")
 plt.ylabel(f"{COMPANY} Share Price")
 plt.legend()
 plt.show()
+plot.savefig(f"v0.1/results/{COMPANY}_plot.png")
 
 #------------------------------------------------------------------------------
 # Predict next day
@@ -270,7 +300,33 @@ real_data = np.reshape(real_data, (real_data.shape[0], real_data.shape[1], 1))
 
 prediction = model.predict(real_data)
 prediction = scaler.inverse_transform(prediction)
-print(f"Prediction: {prediction}")
+logger.info(f"Prediction: {prediction}")
+
+# Simple CSV export
+import pandas as pd
+from datetime import datetime
+
+# Create results
+next_day_actual = actual_prices[-1].item()  # Convert numpy array to scalar
+next_day_predicted = prediction[0].item()   # Convert numpy array to scalar
+error_percentage = abs(next_day_predicted - next_day_actual) / next_day_actual * 100
+
+results_df = pd.DataFrame({
+    'Metric': ['Next_Day_Prediction', 'Last_Known_Price', 'Predicted_Change', 'Error_Percentage'],
+    'Value': [next_day_predicted, next_day_actual, next_day_predicted - next_day_actual, error_percentage]
+})
+
+# Save CSV
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+csv_filename = f"v0.1/results/{COMPANY}_next_day_{timestamp}.csv"
+results_df.to_csv(csv_filename, index=False)
+
+# Simple output
+print(f"\nNext Day Prediction: ${next_day_predicted:.2f}")
+print(f"Last Known Price: ${next_day_actual:.2f}")
+print(f"Predicted Change: ${next_day_predicted - next_day_actual:.2f}")
+print(f"Error: {error_percentage:.1f}%")
+print(f"CSV saved: {csv_filename}")
 
 # A few concluding remarks here:
 # 1. The predictor is quite bad, especially if you look at the next day 

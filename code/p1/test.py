@@ -1,5 +1,5 @@
 import numpy as np
-
+import os
 import matplotlib.pyplot as plt
 
 from p1 import create_model, load_data
@@ -39,7 +39,7 @@ def get_final_df(model, data):
         y_test = np.squeeze(data["column_scaler"]["adjclose"].inverse_transform(np.expand_dims(y_test, axis=0)))
         y_pred = np.squeeze(data["column_scaler"]["adjclose"].inverse_transform(y_pred))
     test_df = data["test_df"]
-    # add predicted future prices to the dataframe
+    # add predicted future prices to the dataframe``
     test_df[f"adjclose_{LOOKUP_STEP}"] = y_pred
     # add true future prices to the dataframe
     test_df[f"true_adjclose_{LOOKUP_STEP}"] = y_test
@@ -88,7 +88,7 @@ model = create_model(N_STEPS, len(FEATURE_COLUMNS), loss=LOSS, units=UNITS, cell
                     dropout=DROPOUT, optimizer=OPTIMIZER, bidirectional=BIDIRECTIONAL)
 
 # load optimal model weights from results folder
-model_path = os.path.join("results", model_name) + ".weights.h5"
+model_path = os.path.join("p1", "results", model_name) + ".weights.h5"
 model.load_weights(model_path)
 
 # evaluate the model
@@ -125,7 +125,7 @@ print("Profit per trade:", profit_per_trade)
 plot_graph(final_df)
 print(final_df.tail(10))
 # save the final dataframe to csv-results folder
-csv_results_folder = "csv-results"
+csv_results_folder = "p1/csv-results"
 if not os.path.isdir(csv_results_folder):
     os.mkdir(csv_results_folder)
 csv_filename = os.path.join(csv_results_folder, model_name + ".csv")
