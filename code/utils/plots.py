@@ -16,5 +16,6 @@ def plot_predictions(actual_prices, predicted_prices, save_path="results/"):
     plt.ylabel(f"{COMPANY} Share Price")
     plt.legend()
     plt.savefig(save_path)
+    plt.show()  # Display the plot
     plt.close()
     

@@ -21,8 +21,8 @@ def check_file_existence(file_path):
             with open(file_path, 'rb') as f:
                 data = pickle.load(f)
             return data
-        elif file_path.endswith('.h5'):
-            return tf.keras.models.load_model(file_path)
+        elif file_path.endswith('.h5') or file_path.endswith('.keras'):
+            return tf.keras.models.load_model(file_path) # type: ignore
     return None
 
 def save_data(data, file_path):

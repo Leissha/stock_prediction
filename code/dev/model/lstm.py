@@ -1,47 +1,48 @@
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dropout, Dense
-from loguru import logger
-from model.base_model import BaseModel
+from tensorflow.keras.models import Sequential # type: ignore
+from tensorflow.keras.layers import LSTM, Dropout, Dense # type: ignore
+from .base_model import BaseModel
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from utils.file_handling import check_file_existence
+from loguru import logger
 
 class LSTMModel(BaseModel):
-    def __init__(self, x_train, y_train, model_name):
-        super().__init__(x_train, y_train, model_name = "lstm")
+    def __init__(self, model_name="lstm", model=None):
+        super().__init__(model_name=model_name, model=model)
 
-    def build_model(self):
+    def create_model(self, x_train):
         """
-        Build and train the model with caching
+        Build the LSTM model
         """
-        model = check_file_existence(self.model_file)
-        if model is None:
-            model = Sequential()
-            
-        model = Sequential()
-            
-        model.add(LSTM(units=50, return_sequences=True, input_shape=(self.x_train.shape[1], 1)))
-        model.add(Dropout(0.2))
-        model.add(LSTM(units=50, return_sequences=True))
-        model.add(Dropout(0.2))
-        model.add(LSTM(units=50))
-        model.add(Dropout(0.2))
-        model.add(Dense(units=1))
+        # Check if model exists and load it
+        model_architecture = self.model_path + ".h5"
+        self.model = check_file_existence(model_architecture)
+        if self.model is not None:
+            logger.info(f"Loading existing model from {model_architecture}")
+            return self.model
         
-        model.compile(optimizer='adam', loss='mean_squared_error')
+        # Build new model
+        logger.info("Building new LSTM model")
+        self.model = Sequential()
         
-    def train_and_save_model(self):
-        """
-        Train the model
-        """
-        model = self.build_model()
-        model.fit(self.x_train, self.y_train, epochs=25, batch_size=32, checkpoint_path=self.model_file)
-        model.save(self.model_file)
-        logger.info(f"Model saved to {self.model_file}")
-
-    def predict(self, x_test):
-        """
-        Predict the model
-        """ 
-        model = self.build_model()
-        model.predict(x_test)
-        return model
-
+        # First LSTM layer with input shape
+        self.model.add(LSTM(units=50, return_sequences=True, input_shape=(x_train.shape[1], x_train.shape[2])))
+        self.model.add(Dropout(0.2))
+        
+        # Second LSTM layer
+        self.model.add(LSTM(units=50, return_sequences=True))
+        self.model.add(Dropout(0.2))
+        
+        # Third LSTM layer
+        self.model.add(LSTM(units=50))
+        self.model.add(Dropout(0.2))
+        
+        # Output layer
+        self.model.add(Dense(units=1))
+        
+        # Compile the model
+        self.model.compile(optimizer='adam', loss='mean_squared_error')
+        
+        return self.model
+        

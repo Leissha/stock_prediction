@@ -99,6 +99,7 @@ y_train = []
 
 scaled_data = scaled_data[:,0] # Turn the 2D array back to a 1D array
 logger.info("\n1D scaled data", scaled_data[:3])
+
 # Prepare the data
 for x in range(PREDICTION_DAYS, len(scaled_data)):
     x_train.append(scaled_data[x-PREDICTION_DAYS:x])
@@ -279,20 +280,30 @@ predicted_prices = scaler.inverse_transform(predicted_prices)
 #------------------------------------------------------------------------------
 os.makedirs(f"v0.1/results", exist_ok=True)
 
+# Use the test data index for x-axis dates
+# Ensure dimensions match by using the correct slice of actual_prices
+test_dates = test_data.index[PREDICTION_DAYS:]  # Skip first PREDICTION_DAYS as they're used for prediction
+actual_prices_test = actual_prices[PREDICTION_DAYS:]  # Match the test_dates length
+
+# Ensure predicted_prices has the same length as test_dates
+if len(predicted_prices) != len(test_dates):
+    # If predicted_prices is longer, take only the last len(test_dates) elements
+    predicted_prices = predicted_prices[-len(test_dates):]
+
 plot = plt.figure(figsize=(16, 8))
-plt.plot(actual_prices, color="black", label=f"Actual {COMPANY} Price")
-plt.plot(predicted_prices, color="green", label=f"Predicted {COMPANY} Price")
+plt.plot(test_dates, actual_prices_test, color="black", label=f"Actual {COMPANY} Price")
+plt.plot(test_dates, predicted_prices, color="green", label=f"Predicted {COMPANY} Price")
 plt.title(f"{COMPANY} Share Price")
-plt.xlabel("Time")
+plt.xlabel("Date")
 plt.ylabel(f"{COMPANY} Share Price")
 plt.legend()
-plt.show()
-plot.savefig(f"v0.1/results/{COMPANY}_plot.png")
+plt.xticks(rotation=45)  # Rotate x-axis labels for better readability
+plt.tight_layout()  # Adjust layout to prevent label cutoff
+plot.savefig(f"v0.1/results/{COMPANY}_plot.png", dpi=300, bbox_inches='tight')
 
 #------------------------------------------------------------------------------
 # Predict next day
 #------------------------------------------------------------------------------
-
 
 real_data = [model_inputs[len(model_inputs) - PREDICTION_DAYS:, 0]]
 real_data = np.array(real_data)
@@ -321,12 +332,35 @@ timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 csv_filename = f"v0.1/results/{COMPANY}_next_day_{timestamp}.csv"
 results_df.to_csv(csv_filename, index=False)
 
-# Simple output
-print(f"\nNext Day Prediction: ${next_day_predicted:.2f}")
-print(f"Last Known Price: ${next_day_actual:.2f}")
-print(f"Predicted Change: ${next_day_predicted - next_day_actual:.2f}")
-print(f"Error: {error_percentage:.1f}%")
-print(f"CSV saved: {csv_filename}")
+# Import the shared accuracy calculation function
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.accuracy_utils import calculate_trading_accuracy, save_accuracy_to_csv
+
+# Calculate accuracy using the shared function (same logic as p1)
+# For v0.1: we predict next-day prices, so we need current prices (day before prediction)
+# Get current prices (day before each prediction)
+current_prices = actual_prices[PREDICTION_DAYS-1:-1]  # Day before each prediction
+
+metrics = calculate_trading_accuracy(
+    actual_prices=actual_prices_test.flatten(),
+    predicted_prices=predicted_prices.flatten(),
+    current_prices=current_prices.flatten(),  # Current prices (day before prediction)
+    lookup_step=1  # v0.1 predicts next day
+)
+
+# Save to CSV using the shared function
+simple_csv_filename = f"v0.1/results/v0.1_output.csv"
+save_accuracy_to_csv(
+    metrics=metrics,
+    future_price=next_day_predicted,
+    loss_value=model.history.history['loss'][-1],
+    loss_name="mean_squared_error loss",
+    filename=simple_csv_filename,
+    lookup_step=1
+)
+print(f"Simple CSV saved: {simple_csv_filename}")
 
 # A few concluding remarks here:
 # 1. The predictor is quite bad, especially if you look at the next day 

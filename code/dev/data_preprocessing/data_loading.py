@@ -19,8 +19,8 @@ def load_stock_data(company, start_date, end_date, cache_dir='dev/cache/raw_data
     # Create cache directory if it doesn't exist
     cache_dir = ensure_directory_exists(cache_dir)
     
-    # Create cache filename
-    file_path = os.path.join(cache_dir, f"{company}_{start_date}->{end_date}.pkl")
+    # Create cache filename (use safe characters for Windows)
+    file_path = os.path.join(cache_dir, f"{company}_{start_date}_to_{end_date}.pkl")
     
     # Check if cached data exists
     data = check_file_existence(file_path)
@@ -28,12 +28,15 @@ def load_stock_data(company, start_date, end_date, cache_dir='dev/cache/raw_data
         logger.info(f"Downloading data for {company}")
         data = yf.download(tickers=company, start=start_date, end=end_date)
         
-        # Flatten MultiIndex columns if they exist
-        if isinstance(data.columns, pd.MultiIndex):
-            data.columns = data.columns.get_level_values(0)
-        
-        # Save to cache
-        save_data(data, file_path)
+        if data is not None and not data.empty:
+            # Flatten MultiIndex columns if they exist
+            if isinstance(data.columns, pd.MultiIndex):
+                data.columns = data.columns.get_level_values(0)
+            
+            # Save to cache
+            save_data(data, file_path)
+        else:
+            raise ValueError(f"Failed to download data for {company}")
     else:
         # Ensure cached data also has flattened columns
         if isinstance(data.columns, pd.MultiIndex):
