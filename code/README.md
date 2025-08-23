@@ -41,7 +41,7 @@ python v0.1/v0.1.py
 
 ---
 
-### 🎯 **p1 - GitHub Project Implementation**
+### **p1 - GitHub Project Reference**
 **Purpose**: Random split approach with 15-day prediction
 
 #### Step 1: Train the Model
@@ -144,7 +144,7 @@ python dev/train.py \
 |--------|-------------|------------|----------------|----------|---------|
 | **v0.1** | Separate date ranges | Next-day | 0.537 | 1 (Close) | ✅ Working |
 | **p1** | Configurable (default: random) | 15-day | 0.955 | 5 (OHLCV) | ✅ Working |
-| **dev** | Configurable | Next-day | ~0.52 | Configurable (OHLCV) | ✅ Working |
+| **dev** | Configurable | Next-day | ~0.52 | Configurable (OHLCV) | ✅ Working & Improving |
 
 ## Output Files
 ### v0.1 Outputs
