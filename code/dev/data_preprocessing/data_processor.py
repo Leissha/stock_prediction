@@ -7,14 +7,10 @@ from sklearn import preprocessing
 # Import existing modular code
 from data_preprocessing.data_splitting import split_data
 from data_preprocessing.data_loading import load_stock_data
-from utils.file_handling import ensure_directory_exists
-
 
 class DataProcessor:
     """
-    Comprehensive data processing class that meets Task 2 requirements.
-    
-    This class provides a clean interface for loading and processing stock data with:
+    This class provides an interface for loading and processing stock data with:
     - Multiple feature support (Open, High, Low, Close, Volume, AdjClose)
     - Flexible data splitting methods (date-based, ratio-based, random)
     - Proper feature scaling with scaler storage
@@ -33,14 +29,14 @@ class DataProcessor:
         Args:
             cache_dir (str): Directory for caching processed data
         """
-        self.cache_dir = ensure_directory_exists(cache_dir)
+        self.cache_dir = cache_dir
         self.scalers = {}
         self.data = None
         self.processed_data = None
 
     
     def data_processing(self, start_date, end_date, ticker, n_steps=50, scale=True, shuffle=True, lookup_step=1, splitting_method="date",
-                    test_size=0.2, feature_columns=['adjclose', 'volume', 'open', 'high', 'low']):
+                    test_size=0.2, feature_columns=['adjclose', 'volume', 'open', 'high', 'low'], target_feature=None, base_path='raw_data'):
         """
         Loads data from Yahoo Finance source, as well as scaling, shuffling, normalizing and splitting.
         Params:
@@ -53,8 +49,9 @@ class DataProcessor:
                 to False will split datasets in a random way
             test_size (float): ratio for test data, default is 0.2 (20% testing data)
             feature_columns (list): the list of features to use to feed into the model, default is everything grabbed from yfinance
+            target_feature (str): the feature to predict, defaults to first feature in feature_columns if None
         """
-        df = load_stock_data(ticker, start_date, end_date, cache_dir=os.path.join(self.cache_dir, 'raw_data'))
+        df = load_stock_data(ticker, start_date, end_date, file_path=self.cache_dir + '/' + base_path + '.pkl')
         logger.info(f"\nRaw data: {df.head()}")
         
         # this will contain all the elements we want to return from this function
@@ -62,20 +59,45 @@ class DataProcessor:
         # we will also return the original dataframe itself
         result['df'] = df.copy()
 
-        # make sure that the passed feature_columns exist in the dataframe
+        # Input validation: make sure that the passed feature_columns exist in the dataframe
         for col in feature_columns:
             assert col in df.columns, f"'{col}' does not exist in the dataframe."
+        
+        # Set target feature: default to first feature if not specified
+        target_col = target_feature if target_feature is not None else feature_columns[0]
+        
+        # Validate target feature exists in dataframe
+        if target_col not in df.columns:
+            raise ValueError(f"Target feature '{target_col}' not found in dataframe columns: {list(df.columns)}")
+        
+        logger.info(f"Target feature for prediction: {target_col}")
 
         # add date as a column
         if "date" not in df.columns:
             df["date"] = df.index
         logger.info(f"\nDate column: {df['date'].head()}")
         
+        # Handle missing values with interpolation if any NaNs are detected
+        if df.isnull().any().any():
+            logger.info("NaN values detected, applying linear interpolation")
+            # Interpolate missing values using linear interpolation for numerical columns
+            numeric_cols = df.select_dtypes(include=[np.number]).columns
+            df[numeric_cols] = df[numeric_cols].interpolate(method='linear', limit_direction='both')
+        else:
+            logger.info("No NaN values detected, skipping interpolation")
+        
+        # add the target column (label) by shifting the target feature by `lookup_step` BEFORE scaling
+        # This creates the "future" values we want to predict
+        df['future'] = df[target_col].shift(-lookup_step)
+        
         if scale:
             column_scaler = {}
-            # scale the data (prices) from 0 to 1
+            # Scale input features from 0 to 1 using MinMaxScaler for each feature separately
+            # Each feature (Close, Volume, Open, High, Low) has different scales, so separate scalers are needed
+            # This ensures all features contribute equally to the neural network training
             for column in feature_columns:
                 scaler = preprocessing.MinMaxScaler()
+                # np.expand_dims converts 1D array to 2D for MinMaxScaler requirement
                 df[column] = scaler.fit_transform(np.expand_dims(df[column].values, axis=1))
                 column_scaler[column] = scaler
 
@@ -83,9 +105,6 @@ class DataProcessor:
             # add the MinMaxScaler instances to the result returned
             result["column_scaler"] = column_scaler
             logger.info(f"\nColumn scaler: \n{result['column_scaler']}")
-
-        # add the target column (label) by shifting by `lookup_step`
-        df['future'] = df['Close'].shift(-lookup_step)
         logger.info(f"\nFuture column (last 8 rows): \n{df['future'].tail(8)}")
 
         # last `lookup_step` columns contains NaN in future column
@@ -97,11 +116,25 @@ class DataProcessor:
         df.dropna(inplace=True)
         logger.info(f"\nDropped NaNs: \n{df.head()}")
         
-        sequence_data = []
-        sequences = deque(maxlen=n_steps)
+        # Scale the target column separately after dropping NaNs
+        # The target ('future') needs its own scaler because it represents shifted values
+        # of the target feature, which may have a different distribution than the original feature
+        if scale:
+            target_scaler = preprocessing.MinMaxScaler()
+            future_values = df['future'].to_numpy().reshape(-1, 1)
+            df['future'] = target_scaler.fit_transform(future_values)
+            # Store target scaler separately for inverse transformation during prediction
+            result["column_scaler"]['future'] = target_scaler
         
+        # Create sequences for LSTM input using sliding window approach
+        # This creates sequences of length n_steps (e.g., 60 days) to predict the next value
+        sequence_data = []
+        sequences = deque(maxlen=n_steps)  # Fixed-size queue that automatically removes old entries
+        
+        # Iterate through each row, creating sequences of features + date paired with target value
         for entry, target in zip(df[feature_columns + ["date"]].values, df['future'].values):
             sequences.append(entry)
+            # Once we have enough historical data (n_steps), create a training sample
             if len(sequences) == n_steps:
                 sequence_data.append([np.array(sequences), target])
         logger.info(f"\nSequence data: \n{sequence_data[:1][:1]}")
@@ -141,6 +174,9 @@ class DataProcessor:
         # remove dates from the training/testing sets & convert to float32
         result["X_train"] = result["X_train"][:, :, :len(feature_columns)].astype(np.float32)
         result["X_test"] = result["X_test"][:, :, :len(feature_columns)].astype(np.float32)
+        
+        # Add feature_columns to result for later use
+        result["feature_columns"] = feature_columns
         logger.info(f"\n Inspect data: X_train range: {np.max(result['X_train'])} - {np.min(result['X_train'])} \nX_test max {np.max(result['X_test'])} - {np.min(result['X_test'])} \ny_train range {np.max(result['y_train'])} - {np.min(result['y_train'])} \ny_test range {np.max(result['y_test'])} - {np.min(result['y_test'])}")
 
         return result

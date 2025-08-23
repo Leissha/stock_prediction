@@ -1,11 +1,15 @@
 import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout, Bidirectional, Input
+from tensorflow.keras.models import Sequential # type: ignore
+from tensorflow.keras.layers import LSTM, Dense, Dropout, Bidirectional, Input # type: ignore
 from sklearn import preprocessing
 from sklearn.model_selection import train_test_split
 from collections import deque
 import yfinance as yf
 from datetime import datetime, timedelta
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.data_handling import shuffle_in_unison
 
 import numpy as np
 import pandas as pd
@@ -15,14 +19,6 @@ import random
 np.random.seed(314)
 tf.random.set_seed(314)
 random.seed(314)
-
-
-def shuffle_in_unison(a, b):
-    # shuffle two arrays in the same way
-    state = np.random.get_state()  # Save current random state
-    np.random.shuffle(a)           # Shuffle first array
-    np.random.set_state(state)     # Restore same random state
-    np.random.shuffle(b)           # Shuffle second array with same pattern
 
 
 def get_stock_data(ticker):

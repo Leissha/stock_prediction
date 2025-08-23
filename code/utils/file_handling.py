@@ -3,14 +3,6 @@ import pickle
 from loguru import logger
 import tensorflow as tf
 
-def ensure_directory_exists(directory):
-    """
-    Check if directory exists
-    """
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-    return directory
-
 def check_file_existence(file_path):
     """
     Check if cached data exists

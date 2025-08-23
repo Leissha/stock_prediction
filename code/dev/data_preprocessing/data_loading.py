@@ -1,27 +1,20 @@
-import os
 import pandas as pd
 from loguru import logger
 import yfinance as yf
-from utils.file_handling import ensure_directory_exists, check_file_existence, save_data
+from utils.file_handling import check_file_existence, save_data
 
 
-def load_stock_data(company, start_date, end_date, cache_dir='dev/cache/raw_data'):
+def load_stock_data(company, start_date, end_date, file_path):
     """
     Load stock data with caching to avoid repeated downloads
     Args:
         company: The company to load data for
         start_date: The start date to load data for
         end_date: The end date to load data for
-        cache_dir: The directory to cache the data in
+        file_path: The path to the file to cache the data in
     Returns:
         data: The loaded data
     """
-    # Create cache directory if it doesn't exist
-    cache_dir = ensure_directory_exists(cache_dir)
-    
-    # Create cache filename (use safe characters for Windows)
-    file_path = os.path.join(cache_dir, f"{company}_{start_date}_to_{end_date}.pkl")
-    
     # Check if cached data exists
     data = check_file_existence(file_path)
     if data is None:

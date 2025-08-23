@@ -1,8 +1,6 @@
 from p1 import create_model, load_data
-from tensorflow.keras.layers import LSTM
-from tensorflow.keras.callbacks import ModelCheckpoint, TensorBoard
+from tensorflow.keras.callbacks import ModelCheckpoint, TensorBoard # type: ignore
 import os
-import pandas as pd
 from parameters import *
 
 

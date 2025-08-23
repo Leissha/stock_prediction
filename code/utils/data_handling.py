@@ -7,8 +7,6 @@ def shuffle_in_unison(a, b):
     np.random.shuffle(a)           # Shuffle first array
     np.random.set_state(state)     # Restore same random state
     np.random.shuffle(b)           # Shuffle second array with same pattern
-    
-
 
 def create_sliding_window(scaled_data, original_data, prediction_days):
     """
@@ -33,7 +31,7 @@ def create_sliding_window(scaled_data, original_data, prediction_days):
     x_train = np.array(x_train)  # 2D array (samples, time_steps)
     y_train = np.array(y_train)  # 1D array (samples, )
     
-    # Reshape for LSTM 3D input req: (samples, time_steps, features):
+    # Reshape for LSTM 3D input req: (batch_size, time_steps (learning_horizon), features):
     x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
     return x_train, y_train
 

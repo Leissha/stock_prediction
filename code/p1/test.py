@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils.accuracy_utils import calculate_trading_accuracy, print_accuracy_metrics, save_accuracy_to_csv
+from utils.evaluating_utils import calculate_trading_metrics
 
 from p1 import create_model, load_data
 from parameters import *
@@ -109,33 +109,22 @@ final_df = get_final_df(model, data)
 # predict the future price
 future_price = predict(model, data)
 
-# Calculate accuracy using the shared function (same logic as before)
-metrics = calculate_trading_accuracy(
-    actual_prices=final_df[f"true_adjclose_{LOOKUP_STEP}"].values,
-    predicted_prices=final_df[f"adjclose_{LOOKUP_STEP}"].values,
-    current_prices=final_df["adjclose"].values,
-    lookup_step=LOOKUP_STEP
-)
-
-# Print metrics using the shared function
-print_accuracy_metrics(
-    metrics=metrics,
-    future_price=future_price,
-    loss_value=loss,
-    loss_name=LOSS,
-    lookup_step=LOOKUP_STEP
-)
-
 # plot true/pred prices graph
 plot_graph(final_df)
 print(final_df.tail(10))
-# save the final dataframe to csv-results folder
+
+# Calculate accuracy and save results
 csv_filename = f"p1/results/p1_output.csv"
-save_accuracy_to_csv(
-    metrics=metrics,
+metrics = calculate_trading_metrics(
+    actual_prices=final_df[f"true_adjclose_{LOOKUP_STEP}"].values,
+    predicted_prices=final_df[f"adjclose_{LOOKUP_STEP}"].values,
+    current_prices=final_df["adjclose"].values,
+    lookup_step=LOOKUP_STEP,
     future_price=future_price,
     loss_value=loss,
     loss_name=LOSS,
     filename=csv_filename,
-    lookup_step=LOOKUP_STEP
+    scale=SCALE,
+    feature_names=FEATURE_COLUMNS,
+    evaluation_mode="price"
 )

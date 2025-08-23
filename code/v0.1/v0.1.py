@@ -17,19 +17,25 @@
 # pip install yfinance
 
 import os
-import numpy as np
-import matplotlib.pyplot as plt
 import pandas as pd
 import pandas_datareader as web
-import datetime as dt
-import tensorflow as tf
+import numpy as np
+import matplotlib.pyplot as plt
 
+import sys
+import tensorflow as tf
+from datetime import datetime, timedelta
 from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout, LSTM, InputLayer
+from tensorflow.keras.models import Sequential # type: ignore
+from tensorflow.keras.layers import Dense, Dropout, LSTM, InputLayer # type: ignore
 from loguru import logger
 
-#------------------------------------------------------------------------------
+# Import the shared accuracy calculation function
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.plots import plot_predictions
+from utils.evaluating_utils import calculate_trading_metrics
+
+#------------------------------------------------------------------------------     
 # Load Data
 ## TO DO:
 # 1) Check if data has been saved before. 
@@ -43,8 +49,7 @@ from loguru import logger
 
 COMPANY = 'AMZN'  # Match P1's company
 
-# Match P1's dynamic date range: last 730 days (2 years) from today
-from datetime import datetime, timedelta
+
 end_date = datetime.now()
 start_date = end_date - timedelta(days=730)
 TRAIN_START = start_date.strftime('%Y-%m-%d')
@@ -58,6 +63,8 @@ import yfinance as yf
 
 # Get the data for the stock AAPL
 data = yf.download(COMPANY,TRAIN_START,TRAIN_END)
+if data is None or data.empty:
+    raise ValueError(f"Failed to download data for {COMPANY}")
 logger.info("\ndata", data[:3])
 #------------------------------------------------------------------------------
 # Prepare Data
@@ -73,7 +80,7 @@ PRICE_VALUE = "Close"
 scaler = MinMaxScaler(feature_range=(0, 1)) 
 # Note that, by default, feature_range=(0, 1). Thus, if you want a different 
 # feature_range (min,max) then you'll need to specify it here
-scaled_data = scaler.fit_transform(data[PRICE_VALUE].values.reshape(-1, 1)) 
+scaled_data = scaler.fit_transform(data[PRICE_VALUE].to_numpy().reshape(-1, 1)) 
 logger.info("\n2D scaled data", scaled_data[:3])
 # Flatten and normalise the data
 # First, we reshape a 1D array(n) to 2D array(n,1)
@@ -217,6 +224,8 @@ TEST_END = end_date.strftime('%Y-%m-%d')
 # test_data = web.DataReader(COMPANY, DATA_SOURCE, TEST_START, TEST_END)
 
 test_data = yf.download(COMPANY,TEST_START,TEST_END)
+if test_data is None or test_data.empty:
+    raise ValueError(f"Failed to download test data for {COMPANY}")
 
 logger.info("\ntest_data", test_data[:3])
 
@@ -231,7 +240,7 @@ logger.info("\nactual_prices", actual_prices[:3])
 total_dataset = pd.concat((data[PRICE_VALUE], test_data[PRICE_VALUE]), axis=0)
 logger.info("\ntotal_dataset", total_dataset[:3])
 
-model_inputs = total_dataset[len(total_dataset) - len(test_data) - PREDICTION_DAYS:].values
+model_inputs = total_dataset[len(total_dataset) - len(test_data) - PREDICTION_DAYS:].to_numpy()
 # We need to do the above because to predict the closing price of the fisrt
 # PREDICTION_DAYS of the test period [TEST_START, TEST_END], we'll need the 
 # data from the training period
@@ -281,7 +290,6 @@ predicted_prices = scaler.inverse_transform(predicted_prices)
 os.makedirs(f"v0.1/results", exist_ok=True)
 
 # Use the test data index for x-axis dates
-# Ensure dimensions match by using the correct slice of actual_prices
 test_dates = test_data.index[PREDICTION_DAYS:]  # Skip first PREDICTION_DAYS as they're used for prediction
 actual_prices_test = actual_prices[PREDICTION_DAYS:]  # Match the test_dates length
 
@@ -290,16 +298,8 @@ if len(predicted_prices) != len(test_dates):
     # If predicted_prices is longer, take only the last len(test_dates) elements
     predicted_prices = predicted_prices[-len(test_dates):]
 
-plot = plt.figure(figsize=(16, 8))
-plt.plot(test_dates, actual_prices_test, color="black", label=f"Actual {COMPANY} Price")
-plt.plot(test_dates, predicted_prices, color="green", label=f"Predicted {COMPANY} Price")
-plt.title(f"{COMPANY} Share Price")
-plt.xlabel("Date")
-plt.ylabel(f"{COMPANY} Share Price")
-plt.legend()
-plt.xticks(rotation=45)  # Rotate x-axis labels for better readability
-plt.tight_layout()  # Adjust layout to prevent label cutoff
-plot.savefig(f"v0.1/results/{COMPANY}_plot.png", dpi=300, bbox_inches='tight')
+plot_path = f"v0.1/results/{COMPANY}_{TEST_START}-seq_{PREDICTION_DAYS}-step_1.png"
+plot_predictions(actual_prices_test, predicted_prices, test_dates, plot_path)
 
 #------------------------------------------------------------------------------
 # Predict next day
@@ -313,52 +313,20 @@ prediction = model.predict(real_data)
 prediction = scaler.inverse_transform(prediction)
 logger.info(f"Prediction: {prediction}")
 
-# Simple CSV export
-import pandas as pd
-from datetime import datetime
-
-# Create results
-next_day_actual = actual_prices[-1].item()  # Convert numpy array to scalar
-next_day_predicted = prediction[0].item()   # Convert numpy array to scalar
-error_percentage = abs(next_day_predicted - next_day_actual) / next_day_actual * 100
-
-results_df = pd.DataFrame({
-    'Metric': ['Next_Day_Prediction', 'Last_Known_Price', 'Predicted_Change', 'Error_Percentage'],
-    'Value': [next_day_predicted, next_day_actual, next_day_predicted - next_day_actual, error_percentage]
-})
-
-# Save CSV
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-csv_filename = f"v0.1/results/{COMPANY}_next_day_{timestamp}.csv"
-results_df.to_csv(csv_filename, index=False)
-
-# Import the shared accuracy calculation function
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils.accuracy_utils import calculate_trading_accuracy, save_accuracy_to_csv
-
-# Calculate accuracy using the shared function (same logic as p1)
-# For v0.1: we predict next-day prices, so we need current prices (day before prediction)
-# Get current prices (day before each prediction)
+# Calculate accuracy using the unified function
 current_prices = actual_prices[PREDICTION_DAYS-1:-1]  # Day before each prediction
 
-metrics = calculate_trading_accuracy(
+simple_csv_filename = f"v0.1/results/{COMPANY}_{TEST_START}-seq_{PREDICTION_DAYS}-step_1.csv"
+metrics = calculate_trading_metrics(
     actual_prices=actual_prices_test.flatten(),
     predicted_prices=predicted_prices.flatten(),
-    current_prices=current_prices.flatten(),  # Current prices (day before prediction)
-    lookup_step=1  # v0.1 predicts next day
-)
-
-# Save to CSV using the shared function
-simple_csv_filename = f"v0.1/results/v0.1_output.csv"
-save_accuracy_to_csv(
-    metrics=metrics,
-    future_price=next_day_predicted,
+    current_prices=current_prices.flatten(),
+    lookup_step=1,
+    future_price=prediction[0][0], # Convert numpy array to scalar
     loss_value=model.history.history['loss'][-1],
     loss_name="mean_squared_error loss",
     filename=simple_csv_filename,
-    lookup_step=1
+    scale=True
 )
 print(f"Simple CSV saved: {simple_csv_filename}")
 
