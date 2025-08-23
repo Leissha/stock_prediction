@@ -1,7 +1,7 @@
 # Stock Prediction Project - COS30018 Option C
 
 ## Project Overview
-A comprehensive stock prediction system implementing and comparing multiple LSTM approaches for financial forecasting. This project demonstrates the evolution from basic tutorial code to advanced production-ready implementations with significant performance improvements.
+This project demonstrates a stock prediction system and comparing multiple AI Models approaches for stock forecasting
 
 ### Key Highlights
 - **28x Profit Improvement**: Advanced P1 model generates $915 vs basic v0.1's $32
