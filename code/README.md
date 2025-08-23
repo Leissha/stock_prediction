@@ -25,7 +25,7 @@ pip install -r requirements.txt
 
 ## Usage Examples
 
-### **v0.1 - Original YouTube Tutorial (Fixed)**
+### **v0.1 - Original Tutorial Code (Fixed)**
 **Purpose**: Sequential split approach with next-day prediction
 ```bash
 # Run the fixed v0.1 implementation
