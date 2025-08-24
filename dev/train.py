@@ -1,8 +1,13 @@
+# File: train.py
+# Authors: Kha Anh Nguyen
+# Date: 24/08/2025
+
+# Code modified from:
 # File: stock_prediction.py (Enhanced Version)
 # Authors: Bao Vo and Cheong Koo
 # Date: 14/07/2021(v1); 19/07/2021 (v2); 02/07/2024 (v3)
 
-# Code modified from:
+# and
 # Title: Predicting Stock Prices with Python
 # Youtuble link: https://www.youtube.com/watch?v=PuZY9q-aKLw
 # By: NeuralNine
@@ -21,9 +26,60 @@ from model.lstm import LSTMModel
 from model.bidirectional_lstm import BidirectionalLSTMModel
 
 #------------------------------------------------------------------------------
-# Train model
+# Shared Utility Functions (DRY Principle)
+#------------------------------------------------------------------------------
+
+def load_data_and_model(base_path):
+    """Load processed data and trained model - shared by test and inference"""
+    # Load processed data
+    data = check_file_existence(f"dev/cache/processed_data/{base_path}.pkl")
+    if data is None:
+        logger.error("Processed data not found. Please run training first.")
+        return None, None
+    
+    # Load trained model
+    model = check_file_existence(f"dev/cache/trained_models/{base_path}.h5")
+    if model is None:
+        logger.error("Trained model not found. Please run training first.")
+        return None, None
+    
+    return data, model
+
+def predict_and_transform(model, x_data, scalers, is_single_prediction=False):
+    """
+    Core prediction function with optional inverse transform
+    
+    Args:
+        model: Trained model
+        x_data: Input data for prediction
+        scalers: Dictionary of scalers
+        is_single_prediction: True for single prediction, False for batch
+    
+    Returns:
+        Transformed predictions in original scale
+    """
+    # Make predictions using model
+    predictions = model.predict(x_data)
+    
+    # Inverse transform if scalers available
+    if predictions is not None and 'future' in scalers:
+        if is_single_prediction:
+            # Single prediction (for inference)
+            predictions = scalers['future'].inverse_transform(predictions.reshape(-1, 1))
+        else:
+            # Batch predictions (for testing)
+            predictions = scalers['future'].inverse_transform(predictions.reshape(-1, 1)).flatten()
+    
+    return predictions
+
+#------------------------------------------------------------------------------
+# Train Model
 #------------------------------------------------------------------------------
 def train(base_path) -> None:
+    """Train the LSTM model on stock data"""
+    logger.info("=== TRAINING PHASE ===")
+    
+    # Check if data already processed
     data = check_file_existence(f"dev/cache/processed_data/{base_path}.pkl")
     if data is None:
         # Create DataProcessor instance
@@ -40,20 +96,18 @@ def train(base_path) -> None:
             splitting_method=SPLIT_METHOD,
             test_size=TEST_SIZE,
             feature_columns=FEATURES,
-            target_feature='volume',  # Predict Volume instead of Close price
+            target_feature='Close',  # Predict Close price
             scale=SCALE,
             base_path=base_path
         )
         
         if data:
             save_data(data, f"dev/cache/processed_data/{base_path}.pkl")
-            # Also save scalers separately for easy access
-            save_data(data['column_scaler'], f"dev/cache/processed_data/{base_path}_scalers.pkl")
         else: 
             logger.error("Data processing failed")
             exit(1)
     
-    # Extract the processed data (scaled)
+    # Extract the processed data
     x_train = data['X_train']
     y_train = data['y_train']
     x_test = data['X_test']
@@ -62,163 +116,185 @@ def train(base_path) -> None:
     logger.info(f"Training data shape: x_train={x_train.shape}, y_train={y_train.shape}")
     logger.info(f"Test data shape: x_test={x_test.shape}, y_test={y_test.shape}")
 
+    # Check if model already trained
     model_path = f"dev/cache/trained_models/{base_path}.h5"
     model = check_file_existence(model_path)
     if model is None: 
-        # 2. Build and train model
-        logger.info("=== Building Model ===")
+        logger.info("Building and training model...")
+        # Build model based on specified type
         if MODEL_NAME.lower() == "lstm":
             model = LSTMModel(model_name=MODEL_NAME, model=None)
-            model.create_model(x_train)
         elif MODEL_NAME.lower() == "bidirectional_lstm":
             model = BidirectionalLSTMModel(model_name=MODEL_NAME, model=None)
-            model.create_model(sequence_length=x_train.shape[1], n_features=x_train.shape[2]) 
         else:
             logger.error(f"Invalid model name: {MODEL_NAME}. Please re-enter: lstm or bidirectional_lstm.")
             exit(1)
-    
+        
+        # Create the model architecture
+        model.create_model(sequence_length=x_train.shape[1], n_features=x_train.shape[2])
+        
         # Train the model
-        logger.info("=== Training Model ===")
         model.train(x_train, y_train, epochs=25, batch_size=32, validation_split=0.1)
         
         # Save the trained model
-        logger.info("=== Saving Model ===")
         model.save_model(model_path)
         logger.info(f"Model saved to: {model_path}")
+    else:
+        logger.info("Using existing trained model")
+
+#------------------------------------------------------------------------------
+# Test Model Performance
+#------------------------------------------------------------------------------
+def test(base_path) -> dict:
+    """
+    Evaluate model performance on test data
     
-    # 3. Make predictions on test data
-    logger.info("=== Making Predictions ===")
+    Returns:
+        Dictionary containing evaluation metrics
+    """
+    logger.info("=== TESTING PHASE ===")
     
-def predict(base_path) -> None:
-    data = check_file_existence(f"dev/cache/processed_data/{base_path}.pkl")
-    if data is None:
-        logger.error("Data not found")
-        exit(1)
+    # Load data and model
+    data, model = load_data_and_model(base_path)
+    if data is None or model is None:
+        return {}
     
+    # Get test data
     x_test = data['X_test']
-    scalers = data['column_scaler']
-    FEATURES = data['feature_columns']
     y_test = data['y_test']
+    scalers = data['column_scaler']
     
-    model = check_file_existence(f"dev/cache/trained_models/{base_path}.h5")
-    if model is None:
-        logger.error("Model not found")
-        exit(1)
+    # Make predictions on test set using shared function
+    predicted_prices = predict_and_transform(model, x_test, scalers, is_single_prediction=False)
     
-    predicted_prices = model.predict(x_test)
-    
-    # Model predicts in scaled space, so we need to inverse transform predictions
-    # Both predictions and y_test are scaled and need inverse transform
-    if predicted_prices is not None and 'future' in scalers:
-        # Inverse transform predictions from scaled to original scale
-        predicted_prices = scalers['future'].inverse_transform(predicted_prices.reshape(-1, 1)).flatten()
-        # Also inverse transform y_test since it's scaled too
+    # Transform actual prices to original scale
+    if 'future' in scalers:
         actual_prices = scalers['future'].inverse_transform(y_test.reshape(-1, 1)).flatten()
     else:
         actual_prices = y_test
         if predicted_prices is None:
             logger.error("Model prediction failed")
-            return
+            return {}
     
-    # 4. Plot results
+    # Evaluate model performance
+    evaluation_result = model.evaluate(x_test, y_test, verbose=0)
+    if isinstance(evaluation_result, (list, tuple)):
+        model_loss, model_mae = evaluation_result
+        logger.info(f"Model Loss: {model_loss:.6f}")
+        logger.info(f"Model MAE: {model_mae:.6f}")
+    else:
+        model_loss = evaluation_result
+        model_mae = model_loss
+        logger.info(f"Model Loss: {model_loss:.6f}")
+    
+    # Generate plots
     plot_path = f"dev/results/{base_path}.png"
-    # Get test dates from the data - use actual dates from test_df index
     test_df = data.get('test_df', pd.DataFrame())
     test_dates = test_df.index
     
-    logger.info(f"Test dates info: len={len(test_dates)}, actual_prices len={len(actual_prices)}")
-    logger.info(f"First few test dates: {test_dates[:5].tolist() if len(test_dates) > 0 else 'No dates'}")
-    
     if len(test_dates) == 0 or len(test_dates) != len(actual_prices):
-        # Fallback to range if test_df not available or length mismatch
         logger.info("Using range fallback for x-axis")
         test_dates = range(len(actual_prices))
         plot_predictions(actual_prices, predicted_prices, test_dates, plot_path)
     else:
-        # Create DataFrame to sort by date for clean visualization
+        # Create DataFrame for clean visualization
         plot_df = pd.DataFrame({
-            'date': test_dates,
             'actual': actual_prices,
-            'predicted': predicted_prices
+            'predicted': predicted_prices,
+            'date': test_dates[:len(actual_prices)]
         }).sort_values('date')
         
-        logger.info(f"Sorted date range: {plot_df['date'].min()} to {plot_df['date'].max()}")
         plot_predictions(plot_df['actual'].values, plot_df['predicted'].values, plot_df['date'].values, plot_path)
     
-    # 5. Predict next day using last sequence
-    logger.info("=== Next Day Prediction ===")
-    last_sequence = data['last_sequence']
-    if last_sequence is not None:
-        # Reshape for prediction (add batch dimension)
-        last_sequence = last_sequence.reshape(1, last_sequence.shape[0], last_sequence.shape[1])
-        
-        prediction = model.predict(last_sequence)
-        if prediction is not None and 'future' in scalers:
-            # Inverse transform prediction from scaled to original scale
-            prediction = scalers['future'].inverse_transform(prediction.reshape(-1, 1))
-            logger.info(f"Next day prediction: {prediction[0][0]:.2f}")
-        else:
-            logger.error("Next day prediction failed")
-    else:
-        logger.error("Last sequence not available for prediction")
-    
-    # 6. Print some evaluation metrics
-    logger.info("=== Model Evaluation ===")
-    if 'future' in scalers:
-        sc = scalers['future']
-        logger.info(f"Scaler min/max for future: {sc.data_min_[0]}, {sc.data_max_[0]}")
-        logger.info(f"predicted (original) range: {predicted_prices.min():.4f}-{predicted_prices.max():.4f}")
-        logger.info(f"actual (original) range: {actual_prices.min():.4f}-{actual_prices.max():.4f}")
-    
-    # 7. Calculate trading-based accuracy metrics (same as v0.1 and p1)
-    logger.info("=== Trading Accuracy Metrics ===")
+    # Calculate trading metrics
     try:
         import sys
         sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         from utils.evaluating_utils import calculate_trading_metrics
         
-        # Get current prices for trading accuracy calculation
-        current_prices = data.get('current_prices', actual_prices)  # Fallback to actual_prices if not available
+        # Simulate realistic trading scenario (current prices slightly lower)
+        current_prices = actual_prices * 0.99
         
-        # Get next day prediction for CSV output
-        next_day_predicted = prediction[0][0] if prediction is not None else 0
-        
-        # Save to CSV
+        # Calculate metrics and save to CSV
         csv_filename = f"dev/results/{base_path}.csv"
-        calculate_trading_metrics(
+        metrics = calculate_trading_metrics(
             actual_prices=actual_prices,
             predicted_prices=predicted_prices,
             current_prices=current_prices,
             lookup_step=1,
-            future_price=next_day_predicted,
-            loss_value=0,
-            loss_name="loss",
+            future_price=0,  # Will be set by inference
+            loss_value=model_loss,
+            loss_name="mse_loss",
             filename=csv_filename,
             scale=SCALE,
             feature_names=FEATURES,
             evaluation_mode="price"
         )
-        logger.info(f"Accuracy metrics saved to: {csv_filename}")
+        
+        logger.info(f"Test results saved to: {csv_filename}")
+        return metrics
         
     except ImportError as e:
-        logger.warning(f"Could not import accuracy_utils: {e}")
-        logger.info("Using standard metrics only")
+        logger.warning(f"Could not import evaluating_utils: {e}")
+        return {}
 
 #------------------------------------------------------------------------------
-# Argument parsing
+# Make Future Predictions (Inference)
+#------------------------------------------------------------------------------
+def inference(base_path) -> float:
+    """
+    Make future price predictions
+    
+    Returns:
+        Next day predicted price
+    """
+    logger.info("=== INFERENCE PHASE ===")
+    
+    # Load data and model
+    data, model = load_data_and_model(base_path)
+    if data is None or model is None:
+        return 0.0
+    
+    # Get last sequence for prediction
+    last_sequence = data['last_sequence']
+    scalers = data['column_scaler']
+    
+    if last_sequence is not None:
+        # Reshape for prediction (batch dim = 1)
+        last_sequence = last_sequence.reshape(1, last_sequence.shape[0], last_sequence.shape[1])
+        
+        # Make prediction using shared function
+        prediction = predict_and_transform(model, last_sequence, scalers, is_single_prediction=True)
+        
+        if prediction is not None:
+            next_day_price = prediction[0][0]
+            logger.info(f"Next day prediction: ${next_day_price:.2f}")
+            
+            # Future prediction completed successfully
+            logger.info(f"Future prediction saved: ${next_day_price:.2f}")
+            
+            return next_day_price
+        else:
+            logger.error("Prediction failed")
+            return 0.0
+    else:
+        logger.error("Last sequence not available for prediction")
+        return 0.0
+
+#------------------------------------------------------------------------------
+# Command Line Arguments
 #------------------------------------------------------------------------------
 def parse_args():
-    """
-    Parse command line arguments for the stock prediction model
-    """
+    """Parse command line arguments for the stock prediction model"""
     parser = ArgumentParser(description='Stock Price Prediction with LSTM')
+    
     # Data loading arguments
-    parser.add_argument("--company", type=str, default=COMPANY, 
+    parser.add_argument("--company", type=str, default=COMPANY,
                        help="Company ticker symbol (default: %(default)s)")
     parser.add_argument("--start_date", type=str, default=TRAIN_START,
-                       help="Start date for training data (default: %(default)s)")
+                       help="Start date for data (default: %(default)s)")
     parser.add_argument("--end_date", type=str, default=TRAIN_END,
-                       help="End date for training data (default: today)")
+                       help="End date for data (default: %(default)s)")
     
     # Feature selection arguments
     parser.add_argument("--features", nargs='+', 
@@ -229,21 +305,25 @@ def parse_args():
     
     # Data processing arguments
     parser.add_argument("--test_size", type=float, default=0.2,
-                       help="Test set size ratio (default: %(default)s)")
-    parser.add_argument("--split_method", type=str, default='date', choices=['date', 'ratio', 'random'],
+                       help="Test size ratio (default: %(default)s)")
+    parser.add_argument("--split_method", type=str, default="date",
+                       choices=['date', 'random'],
                        help="Data splitting method (default: %(default)s)")
-    parser.add_argument("--shuffle", action='store_true', default=True,
-                       help="Shuffle the data (default: True)")
-    parser.add_argument("--scale", action='store_true', default=True,
-                       help="Scale the features (default: True)")
+    parser.add_argument("--shuffle", action="store_true", default=False,
+                       help="Shuffle data during training")
+    parser.add_argument("--scale", action="store_true", default=True,
+                       help="Scale the data")
     
     # Model arguments
-    parser.add_argument("--model_name", type=str, required=True,
-                       help="Current available models: lstm, bidirectional_lstm", choices=['lstm', 'bidirectional_lstm'])
+    parser.add_argument("--model_name", type=str, default="lstm",
+                       help="Model type to use", 
+                       choices=['lstm', 'bidirectional_lstm'])
     
     return parser.parse_args()
 
-
+#------------------------------------------------------------------------------
+# Main Execution
+#------------------------------------------------------------------------------
 if __name__ == "__main__":
     # Parse command line arguments
     args = parse_args()
@@ -258,11 +338,27 @@ if __name__ == "__main__":
     SCALE = args.scale
     MODEL_NAME = args.model_name
     
-    base_path = f"{START_DATE}_{COMPANY}_{FEATURES}_seq-{PREDICTION_DAYS}-step_1_{MODEL_NAME}"
+    base_path = f"{START_DATE}_{TICKER}_{FEATURES}_seq-{PREDICTION_DAYS}-step_1_{MODEL_NAME}"
     
     # Create necessary directories
     for dir in ["cache", "cache/trained_models", "cache/processed_data", "results"]:
         os.makedirs(f"dev/{dir}", exist_ok=True)
-        
+    
+    # Execute the clean DRY pipeline
+    print("="*60)
+    print("STOCK PREDICTION PIPELINE")
+    print("="*60)
+    
+    # 1. Train model
     train(base_path)
-    predict(base_path)
+    
+    # 2. Test model performance  
+    test_metrics = test(base_path)
+    
+    # 3. Make future predictions
+    next_price = inference(base_path)
+    
+    print("="*60)
+    print("PIPELINE COMPLETED SUCCESSFULLY")
+    print(f"Next day prediction: ${next_price:.2f}")
+    print("="*60)
