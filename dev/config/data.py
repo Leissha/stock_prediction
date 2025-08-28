@@ -8,7 +8,7 @@ TRAIN_START = start_date.strftime('%Y-%m-%d')
 TRAIN_END = end_date.strftime('%Y-%m-%d')
 # Price value can be "Close", "Open", "High", "Low", "AdjClose", "Volume"
 PRICE_VALUE = "Close"  
-PREDICTION_DAYS = 60
+LAG_DAYS = 60
 
 # model
 N_STEPS = 60

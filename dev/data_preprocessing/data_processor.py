@@ -8,6 +8,7 @@ from .handle_nans import handle_nans
 from .create_sequence import create_sequences
 from .data_splitting import split_data
 from .data_loading import load_stock_data
+from utils.file_handling import save_data
 
 class DataProcessor:
     """
@@ -21,7 +22,6 @@ class DataProcessor:
     e. Feature scaling with scaler storage
     
     Additional features:
-    - Multi-target prediction support
     - Flexible sequence creation for LSTM
     - Future prediction with lookup_step
     """
@@ -34,9 +34,9 @@ class DataProcessor:
             cache_dir (str): Directory for caching processed data locally
         """
         self.cache_dir = cache_dir
-        self.scalers = {}  # Store scalers for future access (Requirement e)
+        self.scalers = {}  # Store scalers for future access 
         
-        # Create cache directory if it doesn't exist (Requirement d)
+        # Create cache directory if it doesn't exist 
         os.makedirs(self.cache_dir, exist_ok=True)
     
     def data_processing(
@@ -49,7 +49,6 @@ class DataProcessor:
         splitting_method='date',
         test_size=0.2,
         target_feature='close',
-        n_steps=None,
         shuffle=False,
         scale=True,
     ):
@@ -74,19 +73,14 @@ class DataProcessor:
             dict: Complete processed dataset with metadata
             
         Processing pipeline:
-        1. Load data with local caching (Requirements a, d)
-        2. Handle missing values (Requirement b) 
-        3. Split data chronologically/randomly (Requirement c)
-        4. Scale features with scaler storage (Requirement e)
+        1. Load data with local caching 
+        2. Handle missing values 
+        3. Split data chronologically/randomly 
+        4. Scale features with scaler storage 
         5. Create LSTM sequences for single-target prediction
         6. Optional shuffling for training data
         """
-        
-        # Normalize alternative parameter names expected by callers
-        if n_steps is not None:
-            lag_days = n_steps
-
-        # Step 1: Load data with caching (Requirements a, d)
+        # Step 1: Load data with caching 
         df = load_stock_data(ticker, start_date, end_date, cache_dir=self.cache_dir)
         logger.info(f"Loaded data: {df.shape} from {start_date} to {end_date}")
         logger.info(f"Available columns: {df.columns.tolist()}")
@@ -108,16 +102,16 @@ class DataProcessor:
         logger.info(f"Input features (OHLCV): {feature_columns}")
         logger.info(f"Target feature: {target_feature}")
         
-        # Step 2: Handle missing values (Requirement b)
+        # Step 2: Handle missing values 
         df = handle_nans(df)
         
-        # Step 3: Split data (Requirement c)
+        # Step 3: Split data 
         train_df, test_df = split_data(df, method=splitting_method, test_size=test_size, random_state=42)
         logger.info(f"Data split - Train: {train_df.shape}, Test: {test_df.shape}")
         
-        # Step 4: Feature scaling with separate scalers per feature (Requirement e)
+        # Step 4: Feature scaling with separate scalers per feature 
         if scale:
-            # Create separate scalers for each feature - INDUSTRY BEST PRACTICE
+            # Create separate scalers for each feature
             # Reason: OHLCV features have different scales and distributions:
             # - Price features (O,H,L,C): typically $10-$1000 range
             # - Volume feature: millions of shares (1,000,000+)
@@ -132,7 +126,6 @@ class DataProcessor:
                 self.scalers[scaler_key] = MinMaxScaler()
                 
                 # Fit scaler only on training data to prevent data leakage
-                # CRITICAL: Never fit scaler on test data - gives model future information
                 train_scaled[:, i] = self.scalers[scaler_key].fit_transform(
                     train_df[[feature]].values
                 ).reshape(-1)
@@ -142,6 +135,14 @@ class DataProcessor:
                 
                 logger.info(f"Feature '{feature}' scaled: range {self.scalers[scaler_key].data_min_[0]:.4f} to {self.scalers[scaler_key].data_max_[0]:.4f}")
                 
+            # Cache all feature scalers for future inference use
+            scaler_bundle = {
+                "scalers": self.scalers,                 # per-feature scalers dict
+                "feature_columns": feature_columns,      # column order
+                "target_scaler_key": f"{ticker}_{target_feature}",  # just the key string
+            }
+            save_data(scaler_bundle, os.path.join(self.cache_dir, "scalers", f"{ticker}_{start_date}_to_{end_date}_scalers.pkl"))
+            
             logger.info(f"Applied separate MinMaxScaler to {len(feature_columns)} features")
         else:
             train_scaled = train_df[feature_columns].values
@@ -165,17 +166,6 @@ class DataProcessor:
             indices = np.random.permutation(len(X_train))
             X_train, y_train = X_train[indices], y_train[indices]
             logger.info("Training sequences shuffled")
-        
-        # Store target scaler key for simple inverse transforms
-        target_scaler_key = None
-        if scale:
-            target_scaler_key = f"{ticker}_{target_feature}"
-            
-            # Cache scalers for future inference use
-            from utils.file_handling import save_data
-            scalers_cache_path = os.path.join(self.cache_dir, 'scalers', f'{ticker}_scalers.pkl')
-            os.makedirs(os.path.dirname(scalers_cache_path), exist_ok=True)
-            save_data(self.scalers, scalers_cache_path)
 
 
         # Prepare comprehensive results dictionary
@@ -185,27 +175,13 @@ class DataProcessor:
             'X_test': X_test,             # Test input sequences  
             'y_train': y_train,           # Training target values
             'y_test': y_test,             # Test target values
-            
-            # Original dataframes for analysis
-            'train_df': train_df,         # Training dataframe
             'test_df': test_df,           # Test dataframe
-            'original_df': df,            # Complete original dataframe
             
             # Metadata for model configuration
             'feature_columns': feature_columns,    # Input feature names
             'target_feature': target_feature,      # Target feature name
-            'lag_days': lag_days,                  # Sequence length
-            'lookup_step': lookup_step,            # Prediction horizon
+            'scalers': self.scalers,               # Scalers dict
             
-            # Scalers for inverse transformation (Requirement e)
-            'scalers': self.scalers,           # All stored scalers (separate per feature)
-            'target_scaler_key': target_scaler_key,  # Key for target feature scaler
-            'target_feature': target_feature,        # Name of target feature
-            
-            # Processing parameters
-            'splitting_method': splitting_method,
-            'test_size': test_size,
-            'scaled': scale
         }
         
         # Log final statistics

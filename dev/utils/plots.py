@@ -10,15 +10,6 @@ def plot_predictions(actual_prices, predicted_prices, save_path="results/", date
         dates: The dates of the prices
         save_path: The path to save the plot
     """
-    # Ensure dates and prices have the same length
-    # if dates is not None:
-    #     if len(dates) != len(actual_prices):
-    #         print(f"Warning: dates length ({len(dates)}) != actual_prices length ({len(actual_prices)})")
-    #         # Use only the first len(actual_prices) dates
-    #         dates = dates[:len(actual_prices)]
-    
-    # if dates is not None:
-    # Use actual dates for x-axis
     plt.plot(dates, actual_prices, color="black", label=f"Actual {COMPANY} Price")
     plt.plot(dates, predicted_prices, color="green", label=f"Predicted {COMPANY} Price")
     plt.xlabel("Date")

@@ -163,5 +163,5 @@ stock-prediction-project/
 
 ---
 
-**Last Updated**: August 22, 2025  
+**Last Updated**: August 28, 2025  
 **Course**: COS30018 Option C

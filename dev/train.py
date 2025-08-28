@@ -1,5 +1,5 @@
 # File: train.py
-# Authors: Kha Anh Nguyen
+# Authors: Kha Anh Nguyen :)
 # Date: 24/08/2025
 
 # Code modified from:
@@ -25,12 +25,7 @@ from model.lstm import LSTMModel
 from model.bidirectional_lstm import BidirectionalLSTMModel
 from utils.evaluating_utils import calculate_trading_metrics    
 
-#------------------------------------------------------------------------------
-# Shared Utility Functions 
-#------------------------------------------------------------------------------
-
-
-def predict_and_transform(model, x_test, y_test, data):
+def predict_and_transform(model, x_test, y_test, target_scaler=None):
     """
     Simplified prediction function with single-scaler inverse transform
     
@@ -49,18 +44,8 @@ def predict_and_transform(model, x_test, y_test, data):
     # Evaluate model performance on scaled data
     loss_val = model.evaluate(x_test, y_test, verbose=0)
     
-    # Get scaling parameters from data dict
-    target_scaler_key = data.get('target_scaler_key')
-    
-    # Inverse transform using separate scaler for target feature - SIMPLIFIED APPROACH
-    if target_scaler_key:
-        # INDUSTRY BEST PRACTICE: Use separate scaler for target feature
-        # Much simpler than dummy arrays - direct inverse transform of single feature
-        # Research: Financial time series use separate scalers per OHLCV feature
-        target_scaler = data['scalers'][target_scaler_key]
-        
-        # Direct inverse transform - no dummy arrays needed!
-        # Each feature has its own scaler, so we can directly transform single feature values
+    # Inverse transform using separate scaler for target feature
+    if target_scaler is not None:
         actual_prices = target_scaler.inverse_transform(
             y_test.reshape(-1, 1)
         ).reshape(-1)
@@ -68,7 +53,7 @@ def predict_and_transform(model, x_test, y_test, data):
             predictions.reshape(-1, 1)
         ).reshape(-1)
         
-        logger.info(f"Inverse transformed using scaler: {target_scaler_key}")
+        logger.info(f"Inverse transformed using scaler: {target_scaler}")
     else:
         # No scaling was applied, use values as-is
         actual_prices = y_test.reshape(-1)
@@ -94,13 +79,13 @@ def train(base_path) -> None:
         data = processor.data_processing(
             start_date=START_DATE,
             end_date=END_DATE,
-            ticker=TICKER,
-            n_steps=PREDICTION_DAYS,
-            lookup_step=1,
-            shuffle=SHUFFLE,
-            splitting_method=SPLIT_METHOD,
+            ticker=TICKER,				    # Stock company 
+            lag_days=LAG_DAYS,				# learning window size 
+            lookup_step=1,				    # prediction horizon
+            shuffle=SHUFFLE,				# shuffle training set or not
+            splitting_method=SPLIT_METHOD, 	# ratio /date /random split
             test_size=TEST_SIZE,
-            target_feature='Close',  # Predict Close price
+            target_feature='Close',			# Predict Close price
             scale=SCALE
         )
         
@@ -144,12 +129,15 @@ def train(base_path) -> None:
         logger.info(f"Model saved to: {model_path}")
     else:
         logger.info("Using existing trained model")
-        
 
     logger.info("=== TESTING PHASE ===")
-
+    
+    target_feature = data['target_feature'].lower()
+    target_key = f"{TICKER}_{target_feature}"
+    target_scaler = data['scalers'].get(target_key)
+    
     # Make predictions on test set using simplified function
-    actual_prices, predicted_prices, loss_val = predict_and_transform(model, x_test, y_test, data)
+    actual_prices, predicted_prices, loss_val = predict_and_transform(model, x_test, y_test, target_scaler)
     
     # Generate plots
     plot_path = f"dev/results/{base_path}.png"
@@ -209,7 +197,7 @@ def parse_args():
     # Feature selection arguments (using all OHLCV features, predicting Close price)
     parser.add_argument("--target_feature", type=str, default=PRICE_VALUE,
                        help="Target feature to predict (default: Close)", choices=["Close", "Open", "High", "Low", "AdjClose", "Volume"])
-    parser.add_argument("--prediction_days", type=int, default=PREDICTION_DAYS,
+    parser.add_argument("--lag_days", type=int, default=LAG_DAYS,
                        help="Number of days to look back for prediction (default: %(default)s)")
     
     # Data processing arguments
@@ -239,17 +227,17 @@ if __name__ == "__main__":
     TICKER = args.company
     START_DATE = args.start_date
     END_DATE = args.end_date
-    PREDICTION_DAYS = args.prediction_days
+    LAG_DAYS = args.lag_days
     TEST_SIZE = args.test_size
     SPLIT_METHOD = args.split_method
     SHUFFLE = args.shuffle
     SCALE = args.scale
     MODEL_NAME = args.model_name
     TARGET_FEATURE = args.target_feature    
-    base_path = f"{START_DATE}_{TICKER}_{TARGET_FEATURE}_seq-{PREDICTION_DAYS}-step_1_{MODEL_NAME}"
+    base_path = f"{START_DATE}_{TICKER}_{TARGET_FEATURE}_seq-{LAG_DAYS}-step_1_{MODEL_NAME}"
     
     # Create necessary directories
-    for dir in ["cache", "cache/trained_models", "cache/processed_data", "cache/raw_data", "results"]:
+    for dir in ["cache", "cache/trained_models", "cache/processed_data", "cache/raw_data", "cache/scalers", "results"]:
         os.makedirs(f"dev/{dir}", exist_ok=True)
     
     # Execute the clean DRY pipeline
