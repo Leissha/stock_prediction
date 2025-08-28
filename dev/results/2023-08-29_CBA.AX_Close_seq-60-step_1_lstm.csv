@@ -1,0 +1,17 @@
+TEST DATASET PERFORMANCE METRICS
+===============================
+Latest predicted price: $168.10
+Model loss on test data: 0.00861450470983982
+Trading accuracy (profitable trades): 0.4706
+Total buy profit: $18.26
+Total sell profit: $4.21
+Total profit: $22.47
+Profit per trade: $0.2203
+Profitable trades: 48/102 test samples
+Trading threshold: 0.5%
+
+MODEL CONFIGURATION
+==================
+Training features: ['close', 'high', 'low', 'open', 'volume']
+Target feature: close
+Feature scaling applied: True

@@ -1,52 +1,46 @@
 from loguru import logger
-
-from utils.data_handling import shuffle_in_unison
 from sklearn.model_selection import train_test_split
 
-
-def split_data(df, X, y, method='date', test_size=0.2, shuffle=True):
+def split_data(df, method='date', test_size=0.2, random_state=42):
     """
-    Split data using different methods.
+    Split data using different methods (Requirement c)
     
     Args:
-        data (pd.DataFrame): Data to split
-        method (str): 'date', 'ratio', or 'random'
-        test_size (float): Ratio for test data
-        shuffle (bool): Whether to shuffle data
+        df (pd.DataFrame): Input dataframe to split
+        method (str): Splitting method - 'date', 'ratio', or 'random'
+        test_size (float): Proportion of data for testing (0.0 to 1.0)
+        random_state (int): Seed for reproducible random splits
         
     Returns:
-        tuple: (train_data, test_data)
+        tuple: (train_df, test_df)
+        
+    Method explanations:
+    - 'date': Chronological split, respects temporal order (recommended for time series)
+    - 'ratio': Same as date but more explicit naming
+    - 'random': Random sampling (breaks temporal dependencies, use with caution)
     """
-    logger.info(f"Splitting data using method: {method}")
+    logger.info(f"Splitting data using method: {method}, test_size: {test_size}")
     
-    if method == 'date':
-        # split the dataset into training & testing sets by date (not randomly splitting)
-        train_samples = int((1 - test_size) * len(X))
-        df["X_train"] = X[:train_samples]
-        df["y_train"] = y[:train_samples]
-        df["X_test"]  = X[train_samples:]
-        df["y_test"]  = y[train_samples:]
-        if shuffle:
-            # shuffle the datasets for training (if shuffle parameter is set)
-            shuffle_in_unison(df["X_train"], df["y_train"])
-            shuffle_in_unison(df["X_test"], df["y_test"])
+    if method in ['date', 'ratio']:
+        # Chronological split - maintains temporal order
+        # This is critical for time series to avoid data leakage
+        split_point = int(len(df) * (1 - test_size))
+        train_df = df.iloc[:split_point].copy()
+        test_df = df.iloc[split_point:].copy()
+        logger.info(f"Chronological split at index {split_point}")
         
-    elif method == 'ratio':
-        # Split by ratio but maintain chronological order
-        split_point = int(len(X) * (1 - test_size))
-        df["X_train"] = X[:split_point]
-        df["y_train"] = y[:split_point]
-        df["X_test"] = X[split_point:]
-        df["y_test"] = y[split_point:]
-        if shuffle:
-            shuffle_in_unison(df["X_train"], df["y_train"])
-            shuffle_in_unison(df["X_test"], df["y_test"])
-            
     elif method == 'random':
-        # split the dataset randomly
-        df["X_train"], df["X_test"], df["y_train"], df["y_test"] = train_test_split(X, y, 
-                                                                                test_size=test_size, shuffle=shuffle)
-    else:
-        raise ValueError(f"Unknown split method: {method}")
+        # Random split - WARNING: breaks temporal dependencies
+        # Only use this for experimental purposes or when temporal order doesn't matter
+        train_df, test_df = train_test_split(
+            df, 
+            test_size=test_size, 
+            random_state=random_state,
+            shuffle=True
+        )
+        logger.warning("Random split used - temporal dependencies broken!")
         
-    return df
+    else:
+        raise ValueError(f"Unknown split method: {method}. Use 'date', 'ratio', or 'random'")
+        
+    return train_df, test_df

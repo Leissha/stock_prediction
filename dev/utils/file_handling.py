@@ -3,6 +3,14 @@ import pickle
 from loguru import logger
 import tensorflow as tf
 
+def ensure_directory_exists(directory):
+    """
+    Check if directory exists
+    """
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+    return directory
+
 def check_file_existence(file_path):
     """
     Check if cached data exists
@@ -24,3 +32,10 @@ def save_data(data, file_path):
     with open(file_path, 'wb') as f:
         pickle.dump(data, f)
     logger.info(f"Data cached to {file_path}")
+
+def load_scalers(ticker, cache_dir='dev/cache'):
+    """
+    Load cached scalers for inference
+    """
+    scalers_path = os.path.join(cache_dir, 'scalers', f'{ticker}_scalers.pkl')
+    return check_file_existence(scalers_path)

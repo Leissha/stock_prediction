@@ -53,3 +53,17 @@ class BaseModel(ABC):
         except Exception as e:
             logger.error(f"Error during prediction: {e}")
             return None
+    
+    def evaluate(self, x_test, y_test, verbose=0):
+        """
+        Evaluate the model on test data
+        """
+        if self.model is None:
+            logger.error("Model is not created. Please create the model first.")
+            return None
+        try:
+            loss = self.model.evaluate(x_test, y_test, verbose=verbose)
+            return loss
+        except Exception as e:
+            logger.error(f"Error during evaluation: {e}")
+            return None

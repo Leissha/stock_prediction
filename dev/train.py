@@ -16,7 +16,6 @@ import numpy as np
 import pandas as pd
 import os
 from loguru import logger
-from model import *
 from data_preprocessing.data_processor import DataProcessor
 from utils.file_handling import check_file_existence, save_data
 from config.data import *
@@ -24,53 +23,59 @@ from utils.plots import plot_predictions
 from argparse import ArgumentParser
 from model.lstm import LSTMModel
 from model.bidirectional_lstm import BidirectionalLSTMModel
+from utils.evaluating_utils import calculate_trading_metrics    
 
 #------------------------------------------------------------------------------
-# Shared Utility Functions (DRY Principle)
+# Shared Utility Functions 
 #------------------------------------------------------------------------------
 
-def load_data_and_model(base_path):
-    """Load processed data and trained model - shared by test and inference"""
-    # Load processed data
-    data = check_file_existence(f"dev/cache/processed_data/{base_path}.pkl")
-    if data is None:
-        logger.error("Processed data not found. Please run training first.")
-        return None, None
-    
-    # Load trained model
-    model = check_file_existence(f"dev/cache/trained_models/{base_path}.h5")
-    if model is None:
-        logger.error("Trained model not found. Please run training first.")
-        return None, None
-    
-    return data, model
 
-def predict_and_transform(model, x_data, scalers, is_single_prediction=False):
+def predict_and_transform(model, x_test, y_test, data):
     """
-    Core prediction function with optional inverse transform
+    Simplified prediction function with single-scaler inverse transform
     
     Args:
         model: Trained model
-        x_data: Input data for prediction
-        scalers: Dictionary of scalers
-        is_single_prediction: True for single prediction, False for batch
-    
+        x_test: Test input data
+        y_test: Test target data (scaled)
+        data: Dictionary containing scalers and metadata from DataProcessor
+
     Returns:
-        Transformed predictions in original scale
+        tuple: (actual_prices, predicted_prices, loss_val) - all in original scale
     """
     # Make predictions using model
-    predictions = model.predict(x_data)
+    predictions = model.predict(x_test)
     
-    # Inverse transform if scalers available
-    if predictions is not None and 'future' in scalers:
-        if is_single_prediction:
-            # Single prediction (for inference)
-            predictions = scalers['future'].inverse_transform(predictions.reshape(-1, 1))
-        else:
-            # Batch predictions (for testing)
-            predictions = scalers['future'].inverse_transform(predictions.reshape(-1, 1)).flatten()
+    # Evaluate model performance on scaled data
+    loss_val = model.evaluate(x_test, y_test, verbose=0)
     
-    return predictions
+    # Get scaling parameters from data dict
+    target_scaler_key = data.get('target_scaler_key')
+    
+    # Inverse transform using separate scaler for target feature - SIMPLIFIED APPROACH
+    if target_scaler_key:
+        # INDUSTRY BEST PRACTICE: Use separate scaler for target feature
+        # Much simpler than dummy arrays - direct inverse transform of single feature
+        # Research: Financial time series use separate scalers per OHLCV feature
+        target_scaler = data['scalers'][target_scaler_key]
+        
+        # Direct inverse transform - no dummy arrays needed!
+        # Each feature has its own scaler, so we can directly transform single feature values
+        actual_prices = target_scaler.inverse_transform(
+            y_test.reshape(-1, 1)
+        ).reshape(-1)
+        predicted_prices = target_scaler.inverse_transform(
+            predictions.reshape(-1, 1)
+        ).reshape(-1)
+        
+        logger.info(f"Inverse transformed using scaler: {target_scaler_key}")
+    else:
+        # No scaling was applied, use values as-is
+        actual_prices = y_test.reshape(-1)
+        predicted_prices = predictions.reshape(-1)
+        logger.info("No inverse transform applied - values used as-is")
+        
+    return actual_prices, predicted_prices, loss_val
 
 #------------------------------------------------------------------------------
 # Train Model
@@ -95,10 +100,8 @@ def train(base_path) -> None:
             shuffle=SHUFFLE,
             splitting_method=SPLIT_METHOD,
             test_size=TEST_SIZE,
-            feature_columns=FEATURES,
             target_feature='Close',  # Predict Close price
-            scale=SCALE,
-            base_path=base_path
+            scale=SCALE
         )
         
         if data:
@@ -131,7 +134,7 @@ def train(base_path) -> None:
             exit(1)
         
         # Create the model architecture
-        model.create_model(sequence_length=x_train.shape[1], n_features=x_train.shape[2])
+        model.create_model(x_train)
         
         # Train the model
         model.train(x_train, y_train, epochs=25, batch_size=32, validation_split=0.1)
@@ -141,145 +144,52 @@ def train(base_path) -> None:
         logger.info(f"Model saved to: {model_path}")
     else:
         logger.info("Using existing trained model")
+        
 
-#------------------------------------------------------------------------------
-# Test Model Performance
-#------------------------------------------------------------------------------
-def test(base_path) -> dict:
-    """
-    Evaluate model performance on test data
-    
-    Returns:
-        Dictionary containing evaluation metrics
-    """
     logger.info("=== TESTING PHASE ===")
-    
-    # Load data and model
-    data, model = load_data_and_model(base_path)
-    if data is None or model is None:
-        return {}
-    
-    # Get test data
-    x_test = data['X_test']
-    y_test = data['y_test']
-    scalers = data['column_scaler']
-    
-    # Make predictions on test set using shared function
-    predicted_prices = predict_and_transform(model, x_test, scalers, is_single_prediction=False)
-    
-    # Transform actual prices to original scale
-    if 'future' in scalers:
-        actual_prices = scalers['future'].inverse_transform(y_test.reshape(-1, 1)).flatten()
-    else:
-        actual_prices = y_test
-        if predicted_prices is None:
-            logger.error("Model prediction failed")
-            return {}
-    
-    # Evaluate model performance
-    evaluation_result = model.evaluate(x_test, y_test, verbose=0)
-    if isinstance(evaluation_result, (list, tuple)):
-        model_loss, model_mae = evaluation_result
-        logger.info(f"Model Loss: {model_loss:.6f}")
-        logger.info(f"Model MAE: {model_mae:.6f}")
-    else:
-        model_loss = evaluation_result
-        model_mae = model_loss
-        logger.info(f"Model Loss: {model_loss:.6f}")
+
+    # Make predictions on test set using simplified function
+    actual_prices, predicted_prices, loss_val = predict_and_transform(model, x_test, y_test, data)
     
     # Generate plots
     plot_path = f"dev/results/{base_path}.png"
     test_df = data.get('test_df', pd.DataFrame())
     test_dates = test_df.index
     
-    if len(test_dates) == 0 or len(test_dates) != len(actual_prices):
-        logger.info("Using range fallback for x-axis")
-        test_dates = range(len(actual_prices))
-        plot_predictions(actual_prices, predicted_prices, test_dates, plot_path)
-    else:
-        # Create DataFrame for clean visualization
-        plot_df = pd.DataFrame({
-            'actual': actual_prices,
-            'predicted': predicted_prices,
-            'date': test_dates[:len(actual_prices)]
-        }).sort_values('date')
-        
-        plot_predictions(plot_df['actual'].values, plot_df['predicted'].values, plot_df['date'].values, plot_path)
-    
-    # Calculate trading metrics
-    try:
-        import sys
-        sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        from utils.evaluating_utils import calculate_trading_metrics
-        
-        # Simulate realistic trading scenario (current prices slightly lower)
-        current_prices = actual_prices * 0.99
-        
-        # Calculate metrics and save to CSV
-        csv_filename = f"dev/results/{base_path}.csv"
-        metrics = calculate_trading_metrics(
-            actual_prices=actual_prices,
-            predicted_prices=predicted_prices,
-            current_prices=current_prices,
-            lookup_step=1,
-            future_price=0,  # Will be set by inference
-            loss_value=model_loss,
-            loss_name="mse_loss",
-            filename=csv_filename,
-            scale=SCALE,
-            feature_names=FEATURES,
-            evaluation_mode="price"
-        )
-        
-        logger.info(f"Test results saved to: {csv_filename}")
-        return metrics
-        
-    except ImportError as e:
-        logger.warning(f"Could not import evaluating_utils: {e}")
-        return {}
+    plot_predictions(actual_prices, predicted_prices, plot_path, dates=test_dates)
 
-#------------------------------------------------------------------------------
-# Make Future Predictions (Inference)
-#------------------------------------------------------------------------------
-def inference(base_path) -> float:
-    """
-    Make future price predictions
+    # Calculate metrics and save to CSV
+    csv_filename = f"dev/results/{base_path}.csv"
+    # Get the latest prediction as a plain float for reporting
+    pred_arr = np.asarray(predicted_prices).reshape(-1)
+    future_price = float(pred_arr[-1]) if pred_arr.size > 0 else 0.0
     
-    Returns:
-        Next day predicted price
-    """
-    logger.info("=== INFERENCE PHASE ===")
-    
-    # Load data and model
-    data, model = load_data_and_model(base_path)
-    if data is None or model is None:
-        return 0.0
-    
-    # Get last sequence for prediction
-    last_sequence = data['last_sequence']
-    scalers = data['column_scaler']
-    
-    if last_sequence is not None:
-        # Reshape for prediction (batch dim = 1)
-        last_sequence = last_sequence.reshape(1, last_sequence.shape[0], last_sequence.shape[1])
-        
-        # Make prediction using shared function
-        prediction = predict_and_transform(model, last_sequence, scalers, is_single_prediction=True)
-        
-        if prediction is not None:
-            next_day_price = prediction[0][0]
-            logger.info(f"Next day prediction: ${next_day_price:.2f}")
-            
-            # Future prediction completed successfully
-            logger.info(f"Future prediction saved: ${next_day_price:.2f}")
-            
-            return next_day_price
+    # Get current prices (previous day's actual prices for realistic trading)
+    current_prices = []
+    for i in range(len(actual_prices)):
+        if i == 0:
+            # For first prediction, use the last training price
+            # We need to get this from the original test_df before scaling
+            current_prices.append(actual_prices[i])  # Fallback to same price
         else:
-            logger.error("Prediction failed")
-            return 0.0
-    else:
-        logger.error("Last sequence not available for prediction")
-        return 0.0
+            current_prices.append(actual_prices[i-1])
+    
+    metrics = calculate_trading_metrics(
+        actual_prices=actual_prices,
+        predicted_prices=predicted_prices,
+        current_prices=current_prices,
+        lookup_step=1,
+        future_price=future_price,
+        loss_val=loss_val,
+        filename=csv_filename,
+        scale=SCALE,
+        training_features=data.get('feature_columns', ['Close']),
+        target_feature=data.get('target_feature', 'Close'),
+    )
+    
+    logger.info(f"Test results saved to: {csv_filename}")
+    return metrics
+
 
 #------------------------------------------------------------------------------
 # Command Line Arguments
@@ -296,10 +206,9 @@ def parse_args():
     parser.add_argument("--end_date", type=str, default=TRAIN_END,
                        help="End date for data (default: %(default)s)")
     
-    # Feature selection arguments
-    parser.add_argument("--features", nargs='+', 
-                       default=[PRICE_VALUE],
-                       help="Features to use for prediction (default: %(default)s)")
+    # Feature selection arguments (using all OHLCV features, predicting Close price)
+    parser.add_argument("--target_feature", type=str, default=PRICE_VALUE,
+                       help="Target feature to predict (default: Close)", choices=["Close", "Open", "High", "Low", "AdjClose", "Volume"])
     parser.add_argument("--prediction_days", type=int, default=PREDICTION_DAYS,
                        help="Number of days to look back for prediction (default: %(default)s)")
     
@@ -330,18 +239,17 @@ if __name__ == "__main__":
     TICKER = args.company
     START_DATE = args.start_date
     END_DATE = args.end_date
-    FEATURES = args.features
     PREDICTION_DAYS = args.prediction_days
     TEST_SIZE = args.test_size
     SPLIT_METHOD = args.split_method
     SHUFFLE = args.shuffle
     SCALE = args.scale
     MODEL_NAME = args.model_name
-    
-    base_path = f"{START_DATE}_{TICKER}_{FEATURES}_seq-{PREDICTION_DAYS}-step_1_{MODEL_NAME}"
+    TARGET_FEATURE = args.target_feature    
+    base_path = f"{START_DATE}_{TICKER}_{TARGET_FEATURE}_seq-{PREDICTION_DAYS}-step_1_{MODEL_NAME}"
     
     # Create necessary directories
-    for dir in ["cache", "cache/trained_models", "cache/processed_data", "results"]:
+    for dir in ["cache", "cache/trained_models", "cache/processed_data", "cache/raw_data", "results"]:
         os.makedirs(f"dev/{dir}", exist_ok=True)
     
     # Execute the clean DRY pipeline
@@ -352,13 +260,6 @@ if __name__ == "__main__":
     # 1. Train model
     train(base_path)
     
-    # 2. Test model performance  
-    test_metrics = test(base_path)
-    
-    # 3. Make future predictions
-    next_price = inference(base_path)
-    
     print("="*60)
     print("PIPELINE COMPLETED SUCCESSFULLY")
-    print(f"Next day prediction: ${next_price:.2f}")
     print("="*60)
