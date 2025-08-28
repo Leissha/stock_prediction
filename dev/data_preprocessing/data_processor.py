@@ -122,7 +122,6 @@ class DataProcessor:
             # - Price features (O,H,L,C): typically $10-$1000 range
             # - Volume feature: millions of shares (1,000,000+)
             # - Separate scaling preserves individual feature characteristics
-            # Research source: Financial time series preprocessing best practices
             
             train_scaled = np.zeros_like(train_df[feature_columns].values)
             test_scaled = np.zeros_like(test_df[feature_columns].values)

@@ -39,18 +39,18 @@ venv.bak/
 *.code-workspace
 
 # Model files and data
-*.h5
-*.hdf5
-*.pkl
-*.pickle
-*.joblib
-*.csv
-*.xlsx
-*.xls
+# *.h5
+# *.hdf5
+# *.pkl
+# *.pickle
+# *.joblib
+# *.csv
+# *.xlsx
+# *.xls
 
 # Logs and results
 logs/
-results/
+# results/
 *.log
 
 # OS generated files
