@@ -50,6 +50,7 @@ venv.bak/
 
 # Logs and results
 logs/
+results/
 *.log
 
 # OS generated files
@@ -80,6 +81,12 @@ config.ini
 secrets.json
 *.key
 
+# Data directories (uncomment if you don't want to track data)
+# data/
+# datasets/
+# raw_data/
+# processed_data/
+
 # Model checkpoints and weights
 *.weights.h5
 *.checkpoint
@@ -104,4 +111,3 @@ coverage.xml
 dmypy.json
 
 docs/
-cache/

@@ -1,25 +1,29 @@
 import os
 import numpy as np
 from loguru import logger
-from collections import deque
-from sklearn import preprocessing
+from sklearn.preprocessing import MinMaxScaler
 
 # Import existing modular code
-from data_preprocessing.data_splitting import split_data
-from data_preprocessing.data_loading import load_stock_data
+from .handle_nans import handle_nans
+from .create_sequence import create_sequences
+from .data_splitting import split_data
+from .data_loading import load_stock_data
 
 class DataProcessor:
     """
-    This class provides an interface for loading and processing stock data with:
-    - Multiple feature support (Open, High, Low, Close, Volume, AdjClose)
-    - Flexible data splitting methods (date-based, ratio-based, random)
-    - Proper feature scaling with scaler storage
-    - Local data caching for efficiency
-    - NaN handling with forward/backward fill
-    - Sequence creation for LSTM models
+    Complete data processor for multi-feature stock prediction satisfying Task 2 requirements:
     
-    The class reuses existing modular code where applicable while adding
-    the missing functionality required by Task 2.
+    Requirements fulfilled:
+    a. Specify start/end dates for whole dataset
+    b. Handle NaN values in data
+    c. Multiple splitting methods (ratio/date/random)
+    d. Local caching for downloaded data
+    e. Feature scaling with scaler storage
+    
+    Additional features:
+    - Multi-target prediction support
+    - Flexible sequence creation for LSTM
+    - Future prediction with lookup_step
     """
     
     def __init__(self, cache_dir='dev/cache'):
@@ -27,156 +31,195 @@ class DataProcessor:
         Initialize the DataProcessor.
         
         Args:
-            cache_dir (str): Directory for caching processed data
+            cache_dir (str): Directory for caching processed data locally
         """
         self.cache_dir = cache_dir
-        self.scalers = {}
-        self.data = None
-        self.processed_data = None
-
+        self.scalers = {}  # Store scalers for future access (Requirement e)
+        
+        # Create cache directory if it doesn't exist (Requirement d)
+        os.makedirs(self.cache_dir, exist_ok=True)
     
-    def data_processing(self, start_date, end_date, ticker, n_steps=50, scale=True, shuffle=True, lookup_step=1, splitting_method="date",
-                    test_size=0.2, feature_columns=['adjclose', 'volume', 'open', 'high', 'low'], target_feature=None, base_path='raw_data'):
+    def data_processing(
+        self,
+        start_date,
+        end_date,
+        ticker,
+        lag_days=60,
+        lookup_step=1,
+        splitting_method='date',
+        test_size=0.2,
+        target_feature='close',
+        n_steps=None,
+        shuffle=False,
+        scale=True,
+    ):
         """
-        Loads data from Yahoo Finance source, as well as scaling, shuffling, normalizing and splitting.
-        Params:
-            ticker (str/pd.DataFrame): the ticker you want to load, examples include AAPL, TESL, etc.
-            n_steps (int): the historical sequence length (i.e window size) used to predict, default is 50
-            scale (bool): whether to scale prices from 0 to 1, default is True
-            shuffle (bool): whether to shuffle the dataset (both training & testing), default is True
-            lookup_step (int): the future lookup step to predict, default is 1 (e.g next day)
-            split_by_date (bool): whether we split the dataset into training/testing by date, setting it 
-                to False will split datasets in a random way
-            test_size (float): ratio for test data, default is 0.2 (20% testing data)
-            feature_columns (list): the list of features to use to feed into the model, default is everything grabbed from yfinance
-            target_feature (str): the feature to predict, defaults to first feature in feature_columns if None
+        Main data processing function for multi-input, single-target stock prediction.
+        
+        Args:
+            start_date (str): Start date for dataset (Requirement a)
+            end_date (str): End date for dataset (Requirement a)
+            ticker (str): Stock ticker symbol (e.g., 'AAPL', 'TSLA')
+            lag_days (int): Historical sequence length for LSTM input
+            lookup_step (int): Future prediction step (1=next day, 5=next week)
+            splitting_method (str): Data splitting method - 'date', 'ratio', 'random' (Requirement c)
+            test_size (float): Proportion of data for testing (0.0 to 1.0)
+            feature_columns (list): Input features (OHLCV) for prediction
+            target_feature (str): Single target feature to predict (default: 'close')
+            shuffle (bool): Whether to shuffle training sequences after creation
+            scale (bool): Whether to scale features (Requirement e)
+            base_path (str): Base filename for local caching (Requirement d)
+            
+        Returns:
+            dict: Complete processed dataset with metadata
+            
+        Processing pipeline:
+        1. Load data with local caching (Requirements a, d)
+        2. Handle missing values (Requirement b) 
+        3. Split data chronologically/randomly (Requirement c)
+        4. Scale features with scaler storage (Requirement e)
+        5. Create LSTM sequences for single-target prediction
+        6. Optional shuffling for training data
         """
-        df = load_stock_data(ticker, start_date, end_date, file_path=self.cache_dir + '/' + base_path + '.pkl')
-        logger.info(f"\nRaw data: {df.head()}")
         
-        # this will contain all the elements we want to return from this function
-        result = {}
-        # we will also return the original dataframe itself
-        result['df'] = df.copy()
+        # Normalize alternative parameter names expected by callers
+        if n_steps is not None:
+            lag_days = n_steps
 
-        # Input validation: make sure that the passed feature_columns exist in the dataframe
-        for col in feature_columns:
-            assert col in df.columns, f"'{col}' does not exist in the dataframe."
+        # Step 1: Load data with caching (Requirements a, d)
+        df = load_stock_data(ticker, start_date, end_date, cache_dir=self.cache_dir)
+        logger.info(f"Loaded data: {df.shape} from {start_date} to {end_date}")
+        logger.info(f"Available columns: {df.columns.tolist()}")
         
-        # Set target feature: default to first feature if not specified
-        target_col = target_feature if target_feature is not None else feature_columns[0]
+        # Standardize column names to lowercase for consistency
+        df.columns = df.columns.str.lower()
+        feature_columns = df.columns.tolist()
         
-        # Validate target feature exists in dataframe
-        if target_col not in df.columns:
-            raise ValueError(f"Target feature '{target_col}' not found in dataframe columns: {list(df.columns)}")
-        
-        logger.info(f"Target feature for prediction: {target_col}")
-
-        # add date as a column
-        if "date" not in df.columns:
-            df["date"] = df.index
-        logger.info(f"\nDate column: {df['date'].head()}")
-        
-        # Handle missing values with interpolation if any NaNs are detected
-        if df.isnull().any().any():
-            logger.info("NaN values detected, applying linear interpolation")
-            # Interpolate missing values using linear interpolation for numerical columns
-            numeric_cols = df.select_dtypes(include=[np.number]).columns
-            df[numeric_cols] = df[numeric_cols].interpolate(method='linear', limit_direction='both')
+        # Set default target feature if none specified
+        if target_feature is None:
+            target_feature = 'close'  # Default to close price
         else:
-            logger.info("No NaN values detected, skipping interpolation")
+            target_feature = target_feature.lower()
+            
+        # Validate target feature is in feature columns
+        if target_feature not in feature_columns:
+            raise ValueError(f"Target feature '{target_feature}' must be in feature_columns: {feature_columns}")
+
+        logger.info(f"Input features (OHLCV): {feature_columns}")
+        logger.info(f"Target feature: {target_feature}")
         
-        # add the target column (label) by shifting the target feature by `lookup_step` BEFORE scaling
-        # This creates the "future" values we want to predict
-        df['future'] = df[target_col].shift(-lookup_step)
+        # Step 2: Handle missing values (Requirement b)
+        df = handle_nans(df)
         
+        # Step 3: Split data (Requirement c)
+        train_df, test_df = split_data(df, method=splitting_method, test_size=test_size, random_state=42)
+        logger.info(f"Data split - Train: {train_df.shape}, Test: {test_df.shape}")
+        
+        # Step 4: Feature scaling with separate scalers per feature (Requirement e)
         if scale:
-            column_scaler = {}
-            # Scale input features from 0 to 1 using MinMaxScaler for each feature separately
-            # Each feature (Close, Volume, Open, High, Low) has different scales, so separate scalers are needed
-            # This ensures all features contribute equally to the neural network training
-            for column in feature_columns:
-                scaler = preprocessing.MinMaxScaler()
-                # np.expand_dims converts 1D array to 2D for MinMaxScaler requirement
-                df[column] = scaler.fit_transform(np.expand_dims(df[column].values, axis=1))
-                column_scaler[column] = scaler
-
-            logger.info(f"\nScaled data: \n{df.head()}")
-            # add the MinMaxScaler instances to the result returned
-            result["column_scaler"] = column_scaler
-            logger.info(f"\nColumn scaler: \n{result['column_scaler']}")
-        logger.info(f"\nFuture column (last 8 rows): \n{df['future'].tail(8)}")
-
-        # last `lookup_step` columns contains NaN in future column
-        # get them before droping NaNs
-        last_sequence = np.array(df[feature_columns].tail(lookup_step))
-        logger.info(f"\nLast sequence: \n{last_sequence}")
+            # Create separate scalers for each feature - INDUSTRY BEST PRACTICE
+            # Reason: OHLCV features have different scales and distributions:
+            # - Price features (O,H,L,C): typically $10-$1000 range
+            # - Volume feature: millions of shares (1,000,000+)
+            # - Separate scaling preserves individual feature characteristics
+            # Research source: Financial time series preprocessing best practices
+            
+            train_scaled = np.zeros_like(train_df[feature_columns].values)
+            test_scaled = np.zeros_like(test_df[feature_columns].values)
+            
+            for i, feature in enumerate(feature_columns):
+                # Create and store individual scaler for each feature
+                scaler_key = f"{ticker}_{feature}"
+                self.scalers[scaler_key] = MinMaxScaler()
+                
+                # Fit scaler only on training data to prevent data leakage
+                # CRITICAL: Never fit scaler on test data - gives model future information
+                train_scaled[:, i] = self.scalers[scaler_key].fit_transform(
+                    train_df[[feature]].values
+                ).reshape(-1)
+                test_scaled[:, i] = self.scalers[scaler_key].transform(
+                    test_df[[feature]].values
+                ).reshape(-1)
+                
+                logger.info(f"Feature '{feature}' scaled: range {self.scalers[scaler_key].data_min_[0]:.4f} to {self.scalers[scaler_key].data_max_[0]:.4f}")
+                
+            logger.info(f"Applied separate MinMaxScaler to {len(feature_columns)} features")
+        else:
+            train_scaled = train_df[feature_columns].values
+            test_scaled = test_df[feature_columns].values
+            logger.info("No scaling applied")
         
-        # drop NaNs
-        df.dropna(inplace=True)
-        logger.info(f"\nDropped NaNs: \n{df.head()}")
+        # Step 5: Create batch sequences with future prediction
+        logger.info(f"Creating sequences with lag_days={lag_days}, lookup_step={lookup_step}")
         
-        # Scale the target column separately after dropping NaNs
-        # The target ('future') needs its own scaler because it represents shifted values
-        # of the target feature, which may have a different distribution than the original feature
+        X_train, y_train = create_sequences(
+            train_scaled, lag_days, lookup_step, [target_feature], feature_columns
+        )
+        test_scaled = np.vstack([train_scaled[-lag_days:], test_scaled])
+        X_test, y_test = create_sequences(
+            test_scaled, lag_days, lookup_step, [target_feature], feature_columns
+        )
+        
+        # Step 6: Optional shuffling for training data
+        if shuffle:
+            # Only shuffle training data to maintain test set integrity
+            indices = np.random.permutation(len(X_train))
+            X_train, y_train = X_train[indices], y_train[indices]
+            logger.info("Training sequences shuffled")
+        
+        # Store target scaler key for simple inverse transforms
+        target_scaler_key = None
         if scale:
-            target_scaler = preprocessing.MinMaxScaler()
-            future_values = df['future'].to_numpy().reshape(-1, 1)
-            df['future'] = target_scaler.fit_transform(future_values)
-            # Store target scaler separately for inverse transformation during prediction
-            result["column_scaler"]['future'] = target_scaler
-        
-        # Create sequences for LSTM input using sliding window approach
-        # This creates sequences of length n_steps (e.g., 60 days) to predict the next value
-        sequence_data = []
-        sequences = deque(maxlen=n_steps)  # Fixed-size queue that automatically removes old entries
-        
-        # Iterate through each row, creating sequences of features + date paired with target value
-        for entry, target in zip(df[feature_columns + ["date"]].values, df['future'].values):
-            sequences.append(entry)
-            # Once we have enough historical data (n_steps), create a training sample
-            if len(sequences) == n_steps:
-                sequence_data.append([np.array(sequences), target])
-        logger.info(f"\nSequence data: \n{sequence_data[:1][:1]}")
-        
-        # get the last sequence by appending the last `n_step` sequence with `lookup_step` sequence
-        # for instance, if n_steps=50 and lookup_step=10, last_sequence should be of 60 (that is 50+10) length
-        # this last_sequence will be used to predict future stock prices that are not available in the dataset
-        last_sequence = list([s[:len(feature_columns)] for s in sequences]) + list(last_sequence)
-        last_sequence = np.array(last_sequence).astype(np.float32)
-        # add to result
-        result['last_sequence'] = last_sequence
-        logger.info(f"\nLast sequence: \n{result['last_sequence'].shape}")
-        
-        # construct the X's and y's
-        X, y = [], []
-        for seq, target in sequence_data:
-            X.append(seq)
-            y.append(target)
-        logger.info(f"\nX: \n{X[:1][:1]}")
-        logger.info(f"\ny: \n{y[:1][:1]}")
-        # convert to numpy arrays
-        X = np.array(X)
-        y = np.array(y)
+            target_scaler_key = f"{ticker}_{target_feature}"
+            
+            # Cache scalers for future inference use
+            from utils.file_handling import save_data
+            scalers_cache_path = os.path.join(self.cache_dir, 'scalers', f'{ticker}_scalers.pkl')
+            os.makedirs(os.path.dirname(scalers_cache_path), exist_ok=True)
+            save_data(self.scalers, scalers_cache_path)
 
-        # Return result[X_train], result[X_test], result[y_train], result[y_test]
-        result = split_data(df=result, X=X, y=y, method=splitting_method, test_size=test_size, shuffle=shuffle)
-        
-        # replace the bad log
-        logger.info(f"\nResult after splitting: \nX_train={result['X_train'].shape}, \nX_test={result['X_test'].shape}, \ny_train={result['y_train'].shape}, \ny_test={result['y_test'].shape}")
-        
-        # get the list of test set dates
-        dates = result["X_test"][:, -1, -1]
-        # retrieve test features from the original dataframe
-        result["test_df"] = result["df"].loc[dates]
-        # remove duplicated dates in the testing dataframe
-        result["test_df"] = result["test_df"][~result["test_df"].index.duplicated(keep='first')]
-        # remove dates from the training/testing sets & convert to float32
-        result["X_train"] = result["X_train"][:, :, :len(feature_columns)].astype(np.float32)
-        result["X_test"] = result["X_test"][:, :, :len(feature_columns)].astype(np.float32)
-        
-        # Add feature_columns to result for later use
-        result["feature_columns"] = feature_columns
-        logger.info(f"\n Inspect data: X_train range: {np.max(result['X_train'])} - {np.min(result['X_train'])} \nX_test max {np.max(result['X_test'])} - {np.min(result['X_test'])} \ny_train range {np.max(result['y_train'])} - {np.min(result['y_train'])} \ny_test range {np.max(result['y_test'])} - {np.min(result['y_test'])}")
 
+        # Prepare comprehensive results dictionary
+        result = {
+            # Processed sequences for model training
+            'X_train': X_train,           # Training input sequences
+            'X_test': X_test,             # Test input sequences  
+            'y_train': y_train,           # Training target values
+            'y_test': y_test,             # Test target values
+            
+            # Original dataframes for analysis
+            'train_df': train_df,         # Training dataframe
+            'test_df': test_df,           # Test dataframe
+            'original_df': df,            # Complete original dataframe
+            
+            # Metadata for model configuration
+            'feature_columns': feature_columns,    # Input feature names
+            'target_feature': target_feature,      # Target feature name
+            'lag_days': lag_days,                  # Sequence length
+            'lookup_step': lookup_step,            # Prediction horizon
+            
+            # Scalers for inverse transformation (Requirement e)
+            'scalers': self.scalers,           # All stored scalers (separate per feature)
+            'target_scaler_key': target_scaler_key,  # Key for target feature scaler
+            'target_feature': target_feature,        # Name of target feature
+            
+            # Processing parameters
+            'splitting_method': splitting_method,
+            'test_size': test_size,
+            'scaled': scale
+        }
+        
+        # Log final statistics
+        logger.info("=" * 60)
+        logger.info("DATA PROCESSING COMPLETE")
+        logger.info(f"Training sequences: X{X_train.shape} → y{y_train.shape}")
+        logger.info(f"Test sequences: X{X_test.shape} → y{y_test.shape}")
+        
+        if len(X_train) > 0:
+            logger.info(f"Data value range: [{X_train.min():.4f}, {X_train.max():.4f}]")
+            
+        logger.info(f"Total scalers stored: {len(self.scalers)}")
+        logger.info("=" * 60)
+        
         return result
+

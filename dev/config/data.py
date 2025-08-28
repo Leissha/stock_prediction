@@ -6,12 +6,13 @@ end_date = datetime.now()
 start_date = end_date - timedelta(days=730)
 TRAIN_START = start_date.strftime('%Y-%m-%d')
 TRAIN_END = end_date.strftime('%Y-%m-%d')
-PRICE_VALUE = "Close"  # Can be "Close", "Open", "High", "Low", "AdjClose", "Volume"
+# Price value can be "Close", "Open", "High", "Low", "AdjClose", "Volume"
+PRICE_VALUE = "Close"  
 PREDICTION_DAYS = 60
 
 # model
 N_STEPS = 60
-FEATURE_COLUMNS = ['adjclose']
+FEATURE_COLUMNS = ['close']
 LOSS = "mean_squared_error"
 UNITS = 50
 N_LAYERS = 3
