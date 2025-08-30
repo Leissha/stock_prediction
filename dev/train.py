@@ -17,13 +17,14 @@ import pandas as pd
 import os
 from loguru import logger
 from data_preprocessing.data_processor import DataProcessor
-from utils.file_handling import check_file_existence, save_data
+from utils.file_handling import save_data
 from config.data import *
 from utils.plots import plot_predictions
 from argparse import ArgumentParser
 from model.lstm import LSTMModel
 from model.bidirectional_lstm import BidirectionalLSTMModel
-from utils.evaluating_utils import calculate_trading_metrics    
+from utils.evaluating_utils import calculate_trading_metrics
+import tensorflow as tf    
 
 def predict_and_transform(model, x_test, y_test, target_scaler=None):
     """
@@ -39,10 +40,18 @@ def predict_and_transform(model, x_test, y_test, target_scaler=None):
         tuple: (actual_prices, predicted_prices, loss_val) - all in original scale
     """
     # Make predictions using model
-    predictions = model.predict(x_test)
+    logger.info("Making predictions...")
+    predictions = model.predict(x_test, verbose=0)
+    logger.info(f"Predictions shape: {predictions.shape}")
     
     # Evaluate model performance on scaled data
-    loss_val = model.evaluate(x_test, y_test, verbose=0)
+    logger.info("Evaluating model...")
+    try:
+        loss_val = model.evaluate(x_test, y_test, verbose=0)
+        logger.info(f"Model evaluation completed, loss: {loss_val}")
+    except Exception as e:
+        logger.error(f"Model evaluation failed: {e}")
+        loss_val = None
     
     # Inverse transform using separate scaler for target feature
     if target_scaler is not None:
@@ -65,13 +74,13 @@ def predict_and_transform(model, x_test, y_test, target_scaler=None):
 #------------------------------------------------------------------------------
 # Train Model
 #------------------------------------------------------------------------------
-def train(base_path) -> None:
+def train(base_path) -> dict:
     """Train the LSTM model on stock data"""
     logger.info("=== TRAINING PHASE ===")
     
     # Check if data already processed
-    data = check_file_existence(f"dev/cache/processed_data/{base_path}.pkl")
-    if data is None:
+    data_path = f"dev/cache/processed_data/{base_path}.pkl"
+    if not os.path.exists(data_path):
         # Create DataProcessor instance
         processor = DataProcessor(cache_dir='dev/cache')
         
@@ -94,7 +103,10 @@ def train(base_path) -> None:
         else: 
             logger.error("Data processing failed")
             exit(1)
-    
+    else:
+        logger.info("Loading cached processed data")
+        data = pd.read_pickle(data_path)
+
     # Extract the processed data
     x_train = data['X_train']
     y_train = data['y_train']
@@ -106,8 +118,7 @@ def train(base_path) -> None:
 
     # Check if model already trained
     model_path = f"dev/cache/trained_models/{base_path}.h5"
-    model = check_file_existence(model_path)
-    if model is None: 
+    if not os.path.exists(model_path):
         logger.info("Building and training model...")
         # Build model based on specified type
         if MODEL_NAME.lower() == "lstm":
@@ -119,7 +130,10 @@ def train(base_path) -> None:
             exit(1)
         
         # Create the model architecture
-        model.create_model(x_train)
+        if isinstance(model, BidirectionalLSTMModel):
+            model.create_model(sequence_length=x_train.shape[1], n_features=x_train.shape[2])
+        else:
+            model.create_model(x_train)
         
         # Train the model
         model.train(x_train, y_train, epochs=25, batch_size=32, validation_split=0.1)
@@ -129,6 +143,8 @@ def train(base_path) -> None:
         logger.info(f"Model saved to: {model_path}")
     else:
         logger.info("Using existing trained model")
+        # Load the existing model using TensorFlow
+        model = tf.keras.models.load_model(model_path)  # type: ignore
 
     logger.info("=== TESTING PHASE ===")
     
@@ -140,11 +156,10 @@ def train(base_path) -> None:
     actual_prices, predicted_prices, loss_val = predict_and_transform(model, x_test, y_test, target_scaler)
     
     # Generate plots
-    plot_path = f"dev/results/{base_path}.png"
     test_df = data.get('test_df', pd.DataFrame())
     test_dates = test_df.index
-    
-    plot_predictions(actual_prices, predicted_prices, plot_path, dates=test_dates)
+    plot_path = f"dev/results/{base_path}_predictions_chart.png"
+    plot_predictions(actual_prices, predicted_prices, TICKER, save_path=plot_path, dates=test_dates)
 
     # Calculate metrics and save to CSV
     csv_filename = f"dev/results/{base_path}.csv"
@@ -234,7 +249,7 @@ if __name__ == "__main__":
     SCALE = args.scale
     MODEL_NAME = args.model_name
     TARGET_FEATURE = args.target_feature    
-    base_path = f"{START_DATE}_{TICKER}_{TARGET_FEATURE}_seq-{LAG_DAYS}-step_1_{MODEL_NAME}"
+    base_path = f"{TICKER}_{START_DATE}_to_{END_DATE}_{TARGET_FEATURE}_seq-{LAG_DAYS}-step_1_{MODEL_NAME}"
     
     # Create necessary directories
     for dir in ["cache", "cache/trained_models", "cache/processed_data", "cache/raw_data", "cache/scalers", "results"]:

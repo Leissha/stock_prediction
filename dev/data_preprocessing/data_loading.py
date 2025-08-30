@@ -2,7 +2,7 @@ import os
 import pandas as pd
 from loguru import logger
 import yfinance as yf
-from utils.file_handling import check_file_existence, save_data
+from utils.file_handling import save_data
 
 
 def load_stock_data(company, start_date, end_date, cache_dir='dev/cache/raw_data'):
@@ -15,8 +15,14 @@ def load_stock_data(company, start_date, end_date, cache_dir='dev/cache/raw_data
     file_path = os.path.join(cache_dir,"raw_data", f"{company}_{start_date}_to_{end_date}.pkl")
     
     # Check if cached data exists
-    data = check_file_existence(file_path)
-    if data is None:
+    if os.path.exists(file_path):
+        logger.info(f"Loading cached data for {company}")
+        data = pd.read_pickle(file_path)
+        # Also normalize cached data columns if needed
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = data.columns.get_level_values(0)
+        return data
+    else:
         logger.info(f"Downloading data for {company}")
         data = yf.download(tickers=company, start=start_date, end=end_date)
         
@@ -29,9 +35,4 @@ def load_stock_data(company, start_date, end_date, cache_dir='dev/cache/raw_data
             save_data(data, file_path)
         else:
             raise ValueError(f"Failed to download data for {company}")
-    else:
-        # Also normalize cached data columns if needed
-        if isinstance(data.columns, pd.MultiIndex):
-            data.columns = data.columns.get_level_values(0)
-    
     return data
