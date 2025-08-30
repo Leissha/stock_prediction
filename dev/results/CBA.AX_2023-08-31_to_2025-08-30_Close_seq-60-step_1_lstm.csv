@@ -1,12 +1,12 @@
 TEST DATASET PERFORMANCE METRICS
 ===============================
-Latest predicted price: $167.16
-Model loss on test data: 0.010731114074587822
+Latest predicted price: $170.03
+Model loss on test data: 0.006552600301802158
 Trading accuracy (profitable trades): 0.4608
-Total buy profit: $7.59
-Total sell profit: $0.90
-Total profit: $8.49
-Profit per trade: $0.0832
+Total buy profit: $21.07
+Total sell profit: $7.49
+Total profit: $28.56
+Profit per trade: $0.2800
 Profitable trades: 47/102 test samples
 Trading threshold: 0.5%
 

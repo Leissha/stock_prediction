@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import pandas as pd
 from loguru import logger
 from sklearn.preprocessing import MinMaxScaler
 
@@ -9,6 +10,7 @@ from .create_sequence import create_sequences
 from .data_splitting import split_data
 from .data_loading import load_stock_data
 from utils.file_handling import save_data
+from utils.plots import create_boxplot, create_candlestick_chart
 
 class DataProcessor:
     """
@@ -73,7 +75,7 @@ class DataProcessor:
             dict: Complete processed dataset with metadata
             
         Processing pipeline:
-        1. Load data with local caching 
+        1. Load data with local caching & create chart for data inspection
         2. Handle missing values 
         3. Split data chronologically/randomly 
         4. Scale features with scaler storage 
@@ -82,6 +84,7 @@ class DataProcessor:
         """
         # Step 1: Load data with caching 
         df = load_stock_data(ticker, start_date, end_date, cache_dir=self.cache_dir)
+            
         logger.info(f"Loaded data: {df.shape} from {start_date} to {end_date}")
         logger.info(f"Available columns: {df.columns.tolist()}")
         
@@ -89,6 +92,30 @@ class DataProcessor:
         df.columns = df.columns.str.lower()
         feature_columns = df.columns.tolist()
         
+        # Create chart for data inspection
+        try:
+            chart_path = f"dev/cache/inspect_data/{ticker}_{start_date}_to_{end_date}"
+            os.makedirs(os.path.dirname(chart_path), exist_ok=True)
+            
+            candlestick_path = f"{chart_path}/candlestick_chart.png"
+            boxplot_path = f"{chart_path}/boxplot.png"
+            
+            # Check if chart files exist
+            if not os.path.exists(candlestick_path):
+                create_candlestick_chart(df, ticker, save_path=candlestick_path, n_days=1)  
+                logger.info(f"Candlestick chart saved to: {candlestick_path}")
+            else:
+                logger.info("Candlestick chart already exists")
+                
+            if not os.path.exists(boxplot_path):
+                create_boxplot(df, ticker, save_path=boxplot_path, n_days=20)
+                logger.info(f"Boxplot saved to: {boxplot_path}")
+            else:
+                logger.info("Boxplot already exists")
+                
+        except Exception as e:
+            logger.error(f"Chart creation failed: {e}")
+
         # Set default target feature if none specified
         if target_feature is None:
             target_feature = 'close'  # Default to close price
@@ -181,7 +208,6 @@ class DataProcessor:
             'feature_columns': feature_columns,    # Input feature names
             'target_feature': target_feature,      # Target feature name
             'scalers': self.scalers,               # Scalers dict
-            
         }
         
         # Log final statistics
