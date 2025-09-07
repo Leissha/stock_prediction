@@ -1,0 +1,20 @@
+{
+  "model_name": "gru",
+  "best_hyperparameters": {
+    "n_layers": 3,
+    "units_l0": 72,
+    "units_l1": 73,
+    "units_l2": 100,
+    "dropout_rate": 0.2,
+    "learning_rate": 0.0007309539835912913,
+    "batch_size": 32,
+    "epochs": 105,
+    "threshold": 0.02552314928976662,
+    "cost": 0.0012195678219063023
+  },
+  "best_score": 0.0,
+  "best_trial_number": 1,
+  "total_trials": 2,
+  "total_time": 14.584490060806274,
+  "gpu_used": true
+}

@@ -4,108 +4,100 @@ Trading Evaluation Utilities to calculate trading metrics for stock prediction m
 
 import numpy as np
 
-def calculate_trading_metrics(
-    actual_prices, 
-    predicted_prices, 
-    current_prices=None,
-    lookup_step=1, 
-    future_price=None, 
-    loss_val=None, 
-    filename=None,
-    scale=True,
-    training_features=None,
-    target_feature=None,
-):
+def trading_metrics_from_prices(p_true, p_pred, threshold=0.01, cost=0.0005):
     """
-    Calculate trading accuracy and profit metrics.
-    
-    Simple trading strategy:
-    - BUY when predicted > current (profit = actual - current)
-    - SELL when predicted < current (profit = current - actual)
+    Clean trading metrics from price sequences (Rule B).
     
     Args:
-        actual_prices: True values from test data
-        predicted_prices: Model predictions
-        current_prices: Day before each prediction
-        lookup_step: Prediction horizon in days
-        future_price: Single latest prediction value.
-        loss_value: Model's loss metric for reporting
-        filename: Path to save results as text file
+        p_true: True price sequence (inverse-transformed)
+        p_pred: Predicted price sequence (inverse-transformed) 
+        threshold: Return threshold to trigger trade
+        cost: Transaction cost per trade (as fraction)
     
     Returns:
-        Dictionary containing trading metrics
+        Dictionary with trading metrics in percent space
     """
-    actual_prices = np.array(actual_prices).flatten()
-    predicted_prices = np.array(predicted_prices).flatten()
+    # Convert to numpy arrays
+    p_true = np.array(p_true).flatten()
+    p_pred = np.array(p_pred).flatten()
     
-    # Define lambda functions for profit calculations with minimum threshold
-    # Only trade if prediction differs by more than 0.5% from current price
-    threshold = 0.005  # 0.5% threshold
+    if len(p_true) < 2:
+        return {'accuracy': 0.0, 'total_profit_pct': 0.0, 'profit_per_trade_pct': 0.0, 
+                'profitable_trades': 0, 'total_trades': 1}
     
-    buy_profit_calc = lambda current, pred_future, true_future: true_future - current if pred_future > current * (1 + threshold) else 0
-    sell_profit_calc = lambda current, pred_future, true_future: current - true_future if pred_future < current * (1 - threshold) else 0
+    # 1-step returns on true price
+    r_true = (p_true[1:] - p_true[:-1]) / p_true[:-1]
+    # Model-implied next-step returns (use current price in denominator)
+    r_pred = (p_pred[1:] - p_true[:-1]) / p_true[:-1]
     
-    # Calculate buy and sell profits using lambda functions
-    buy_profits = []
-    sell_profits = []
+    # Anti-leakage check
+    assert not np.allclose(p_pred[1:], p_true[1:]), "Data leakage detected: predictions == targets"
     
-    for i in range(len(actual_prices)):
-        # Use provided current prices or fallback to previous day's price
-        if current_prices is not None and i < len(current_prices):
-            current = current_prices[i]
-        else:
-            # Fallback: use previous day's actual price as current
-            current = actual_prices[i-1] if i > 0 else actual_prices[i]
-        pred_future = predicted_prices[i]
-        true_future = actual_prices[i]
-        
-        buy_profits.append(buy_profit_calc(current, pred_future, true_future))
-        sell_profits.append(sell_profit_calc(current, pred_future, true_future))
+    # Correlation diagnostic
+    corr = np.corrcoef(r_pred, r_true)[0,1] if len(r_pred) > 1 else 0.0
     
-    # Calculate metrics
-    total_buy_profit = sum(buy_profits)
-    total_sell_profit = sum(sell_profits)
-    total_profit = total_buy_profit + total_sell_profit
-    profit_per_trade = total_profit / len(actual_prices)
+    # Signals based on predicted returns
+    sig = np.where(r_pred > threshold, 1, 
+                   np.where(r_pred < -threshold, -1, 0))
+    trade_mask = sig != 0
     
-    # Count profitable trades
-    profitable_trades = sum(1 for bp, sp in zip(buy_profits, sell_profits) if bp > 0 or sp > 0)
-    accuracy_score = profitable_trades / len(actual_prices)
+    if not trade_mask.any():
+        return {'accuracy': 0.0, 'total_profit_pct': 0.0, 'profit_per_trade_pct': 0.0, 
+                'profitable_trades': 0, 'total_trades': 1, 'correlation': corr}
     
-    results = {
-        'accuracy_score': accuracy_score,
-        'total_buy_profit': total_buy_profit,
-        'total_sell_profit': total_sell_profit,
-        'total_profit': total_profit,
-        'profit_per_trade': profit_per_trade,
+    # Per-trade P&L in percent; apply cost per executed trade
+    pnl = sig[trade_mask] * r_true[trade_mask] - cost
+    
+    # Metrics
+    total_profit_pct = float(pnl.sum())  # % return if you invest 1 unit per trade
+    profit_per_trade = float(pnl.mean()) if pnl.size else 0.0
+    accuracy = float((np.sign(sig[trade_mask]) == np.sign(r_true[trade_mask])).mean()) if pnl.size else 0.0
+    profitable_trades = int((pnl > 0).sum())
+    total_trades = int(trade_mask.sum())
+    
+    return {
+        'accuracy': accuracy,
+        'total_profit_pct': total_profit_pct, 
+        'profit_per_trade_pct': profit_per_trade,
         'profitable_trades': profitable_trades,
-        'total_trades': len(actual_prices),
-        'buy_profits': buy_profits,
-        'sell_profits': sell_profits
+        'total_trades': total_trades,
+        'correlation': corr,
+        'signals': sig,
+        'pnl_pct': pnl
     }
 
-    # Save to file if requested
-    if filename:
-        try:
-            with open(filename, 'w') as f:
-                f.write(f"TEST DATASET PERFORMANCE METRICS\n")
-                f.write(f"===============================\n")
-                f.write(f"Latest predicted price: ${future_price if future_price is not None else 0:.2f}\n")
-                f.write(f"Model loss on test data: {loss_val if loss_val is not None else 'N/A'}\n")
-                f.write(f"Trading accuracy (profitable trades): {accuracy_score:.4f}\n")
-                f.write(f"Total buy profit: ${total_buy_profit:.2f}\n")
-                f.write(f"Total sell profit: ${total_sell_profit:.2f}\n")
-                f.write(f"Total profit: ${total_profit:.2f}\n")
-                f.write(f"Profit per trade: ${profit_per_trade:.4f}\n")
-                f.write(f"Profitable trades: {profitable_trades}/{len(actual_prices)} test samples\n")
-                f.write(f"Trading threshold: 0.5%\n")
-                f.write(f"\nMODEL CONFIGURATION\n")
-                f.write(f"==================\n")
-                f.write(f"Training features: {training_features if training_features is not None else 'N/A'}\n")
-                f.write(f"Target feature: {target_feature}\n")
-                f.write(f"Feature scaling applied: {scale}\n")
-            print(f"Trading metrics saved to: {filename}")
-        except Exception as e:
-            print(f"Error saving trading metrics: {e}")
-
-    return results
+# Backward compatibility wrapper 
+def calculate_trading_metrics_returns(actual_returns, predicted_returns, current_prices, threshold=0.002, cost=0.001):
+    """Legacy wrapper - converts to price-based evaluation."""
+    # This should not be used anymore - keeping for compatibility
+    import warnings
+    warnings.warn("Use trading_metrics_from_prices instead", DeprecationWarning)
+    
+    # Convert returns back to prices (approximate)
+    current_prices = np.array(current_prices).flatten()
+    actual_returns = np.array(actual_returns).flatten() 
+    predicted_returns = np.array(predicted_returns).flatten()
+    
+    if len(current_prices) == 0:
+        return {'accuracy_score': 0.0, 'total_profit': 0.0}
+        
+    # Reconstruct price sequences
+    p_true = current_prices * (1 + actual_returns)
+    p_pred = current_prices * (1 + predicted_returns)
+    
+    # Use new clean function
+    result = trading_metrics_from_prices(
+        np.concatenate([current_prices[:1], p_true]), 
+        np.concatenate([current_prices[:1], p_pred]),
+        threshold=threshold, cost=cost
+    )
+    
+    # Map to old field names for compatibility
+    return {
+        'accuracy_score': result['accuracy'],
+        'total_profit': result['total_profit_pct'] * np.mean(current_prices),  # Approximate dollars
+        'profit_per_trade': result['profit_per_trade_pct'],
+        'profitable_trades': result['profitable_trades'],
+        'total_trades': result['total_trades'],
+        'total_samples': len(actual_returns)
+    }

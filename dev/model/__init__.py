@@ -1,3 +1,5 @@
-from .lstm import LSTMModel
+"""
+Model package initializer.
+"""
 
-__all__ = ["LSTMModel"]
+__all__ = []

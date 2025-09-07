@@ -1,7 +1,8 @@
 from loguru import logger
 from sklearn.model_selection import train_test_split
+from config.data import *
 
-def split_data(df, method='date', test_size=0.2, random_state=42):
+def split_data(df, method=SPLIT_METHOD, test_size=TEST_SIZE, random_state=RANDOM_STATE):
     """
     Split data using different methods (Requirement c)
     
@@ -44,3 +45,18 @@ def split_data(df, method='date', test_size=0.2, random_state=42):
         raise ValueError(f"Unknown split method: {method}. Use 'date', 'ratio', or 'random'")
         
     return train_df, test_df
+
+
+
+def val_split_with_prices(x_train, y_train, current_prices_train, val_size=0.2):
+    """
+    Split data into training and validation sets with current prices.
+    """
+    val_size = int(len(x_train) * val_size)
+    x_val = x_train[-val_size:]
+    y_val = y_train[-val_size:]
+    current_prices_val = current_prices_train[-val_size:]
+    x_train = x_train[:-val_size]
+    y_train = y_train[:-val_size]
+    current_prices_train = current_prices_train[:-val_size]
+    return x_train, y_train, x_val, y_val, current_prices_train, current_prices_val

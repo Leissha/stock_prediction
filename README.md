@@ -21,6 +21,29 @@ pip install -r requirements.txt
 
 
 
+### 🚀 Quick Start
+```bash
+# PyTorch backend
+python dev/train.py --model_name lstm --backend pytorch
+
+# TensorFlow backend
+python dev/train.py --model_name bilstm --backend tensorflow
+
+# Autoload overall best config (if present)
+python dev/train.py --backend tensorflow
+
+# Custom hyperparameters
+python dev/train.py --model_name lstm --layers "128,64,32" --dropout_rate 0.3 --backend pytorch
+```
+
+### 📊 Results & Artifacts
+- Trained models: `dev/cache/trained_models/*.h5` (TF) or `*.pth` (PyTorch)
+- Processed data cache: `dev/cache/processed_data/*.pkl`
+- Results CSV: `dev/results/{config}.csv`
+- Prediction chart: `dev/results/{config}_predictions_chart.png`
+
+---
+
 ### 🔧 **dev - Current Development Module (Task 2 Complete)**
 **Purpose**: Data processing with functionalities:
 1. Cache data
@@ -53,13 +76,7 @@ python dev/train.py --split_method random --test_size 0.2 --shuffle
 ```
 
 #### Model Selection
-```bash
-# Standard LSTM (default)
-python dev/train.py --model_name lstm
-
-# Bidirectional LSTM for potentially better performance
-python dev/train.py --model_name bidirectional_lstm
-```
+Use `train.py` with `--backend pytorch|tensorflow` and `--model_name lstm|gru|rnn|bilstm`.
 
 #### More Configuration
 ```bash
@@ -77,7 +94,7 @@ python dev/train.py \
 # Task 2: Date range control, NaN handling, caching, separate scalers per feature
 ```
 
-**What it does (Task 2 Enhanced):**
+**What it does:**
 - **Multi-feature input**: Uses all OHLCV features automatically
 - **Flexible target selection**: Predict any feature (Close, Open, High, Low, Volume)  
 - **Date range control**: Specify exact start/end dates for data
@@ -86,43 +103,65 @@ python dev/train.py \
 - **Advanced caching**: Raw data + processed data + scaler persistence
 - **Separate scalers**: Industry best practice for OHLCV features
 - **Data leakage prevention**: Scalers fit only on training data
-- Multiple model architectures (LSTM, Bidirectional LSTM)
+- **Data visualization**: Interactive candlestick charts with SMA/EMA and boxplots
+- **Flexible model builder**: Dynamic DL model construction with multiple architectures
+- **Multiple model architectures**: LSTM, GRU, RNN, Bidirectional LSTM, Dense
+- **Comprehensive experimentation**: Framework for testing different hyperparameter configurations
+- **Advanced training**: Early stopping, learning rate scheduling, callbacks
 - Comprehensive trading-based evaluation metrics
-- Outputs: Model files, plots, accuracy CSV files
+- Outputs: Model files, plots, accuracy CSV files, inspection charts, and experiment results
 
 ---
 
-## Command Line Arguments (dev module)
+## Command Line Arguments (dev/train.py)
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
 | `--company` | str | CBA.AX | Company ticker symbol |
 | `--start_date` | str | 2 years ago | Start date for data |
 | `--end_date` | str | Today | End date for data |
-| `--features` | list | ['Close'] | Features to use (Close, Volume, Open, High, Low, AdjClose) |
-| `--prediction_days` | int | 60 | Number of days to look back |
+| `--target_feature` | str | Close | Target to predict (Close, Open, High, Low, AdjClose, Volume) |
+| `--lag_days` | int | 60 | Number of lookback days for sequences (look back)|
 | `--test_size` | float | 0.2 | Test set size ratio |
 | `--split_method` | str | 'date' | Split method (date, ratio, random) |
-| `--shuffle` | flag | True | Shuffle data (for random split) |
+| `--shuffle` | flag | False | Shuffle data (used with random split) |
 | `--scale` | flag | True | Scale features |
-| `--model_name` | str | Required | Model type (lstm, bidirectional_lstm) |
+| `--model_name` | str | None | Model type (lstm, gru, rnn, bilstm) |
+| `--layers` | str | "64,32" | Layer sizes (comma-separated) |
+| `--dropout_rate` | float | 0.2 | Dropout rate |
+| `--learning_rate` | float | 0.001 | Learning rate |
+| `--optimizer` | str | adam | Optimizer (adam, rmsprop, sgd) |
+| `--epochs` | int | 25 | Training epochs |
+| `--batch_size` | int | 32 | Training batch size |
+| `--backend` | str | pytorch | Backend (pytorch, tensorflow) |
+
 
 ## Output Files
 
-- **Model**: `dev/trained_models/*.h5`
-- **Plots**: `dev/results/{some_config}.png`
-- **Cache**: `dev/cache/processed_data/*.pkl` and `dev/cache/raw_data.pkl`
+- **Trained Models**: `dev/cache/trained_models/*.h5` (TF) or `*.pth` (PyTorch)
+- **Prediction Plots**: `dev/results/{config}_predictions_chart.png`
+- **Results CSV**: `dev/results/{config}.csv`
+- **Inspection Charts**: `dev/cache/inspect_data/{ticker}_{date_range}/`
+  - `candlestick_chart.png`, `boxplot.png`
+- **Cache**: `dev/cache/processed_data/*.pkl`, `dev/cache/raw_data/*.pkl`, `dev/cache/scalers/*.pkl`
 
 ## Project Structure
 ```
 stock-prediction-project/
 ├── dev/                    # Advanced development module
-│   ├── train.py            # Main training script
-│   ├── training_data/      # Cleaned data input for model training
-│   ├── model/              # AI Model architect
-│   ├── trained_models/     # Trained models cache
+│   ├── train.py            # Main hybrid training script (PyTorch/TF)
+│   ├── model/              # Model builders
+│   │   ├── pytorch_models.py   # PyTorch LSTM/GRU/RNN/BiLSTM
+│   │   └── tf_models.py         # TensorFlow LSTM/GRU/RNN/BiLSTM
 │   ├── data_preprocessing/ # Data processing modules
-│   ├── cache/              # Cache processed data
+│   ├── cache/              # Cache directory
+│   │   ├── trained_models/ # Trained models cache
+│   │   ├── processed_data/ # Processed data cache
+│   │   ├── raw_data/       # Raw data cache
+│   │   ├── scalers/        # Scaler cache
+│   │   └── finetune/       # Best config JSONs from Optuna
+│   │   └── inspect_data/   # Data inspection charts
+│   ├── experiment_results/ # Experiment results (Task C.4)
 │   ├── config/             # Configuration files
 │   └── results/            # Output files (accuracy.csv & plots)
 ├── utils/                  # Shared utilities (file_handling, eval, plots)
@@ -139,6 +178,8 @@ stock-prediction-project/
 | | numpy | ≥2.1.3 | Numerical computing |
 | | pandas | ≥2.3.1 | Data manipulation |
 | **Visualization** | matplotlib | ≥3.10.5 | Plotting library |
+| | plotly | ≥5.17.0 | Interactive charts |
+| | kaleido | ≥0.2.1 | Static image export |
 | **Data Fetching** | yfinance | ≥0.2.65 | Yahoo Finance data |
 | **Utilities** | requests | ≥2.32.4 | HTTP library |
 | | loguru | ≥0.7.0 | Logging |
@@ -159,7 +200,8 @@ stock-prediction-project/
 ## Status
 - ✅ **Task 1 Complete**: Environment setup, code testing, performance comparison
 - ✅ **Task 2 Complete**: Data cleaning, code refactoring and modularization (for future extensibility & modifiablility :)
-- 🚧 **Task 3 in progress**: Candlestick chart
+- ✅ **Task 3 Complete**: Data visualization with candlestick charts and boxplots
+- ✅ **Task 4 Complete**: Flexible Deep Learning model builder with multiple architectures (LSTM, GRU, RNN, Bidirectional LSTM)
 
 ---
 

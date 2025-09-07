@@ -1,0 +1,20 @@
+{
+  "model_name": "lstm",
+  "best_hyperparameters": {
+    "n_layers": 3,
+    "units_l0": 245,
+    "units_l1": 196,
+    "units_l2": 166,
+    "dropout_rate": 0.1,
+    "learning_rate": 0.00020511104188433984,
+    "batch_size": 32,
+    "epochs": 53,
+    "threshold": 0.04864594334728975,
+    "cost": 0.001359792484318226
+  },
+  "best_score": 0.05014660416052481,
+  "best_trial_number": 0,
+  "total_trials": 5,
+  "total_time": 60.03306579589844,
+  "gpu_used": true
+}

@@ -1,0 +1,2 @@
+accuracy_score,total_profit,profit_per_trade,profitable_trades,total_trades,total_samples,ticker,model_name,dropout_rate,learning_rate,epochs,batch_size,threshold,cost,latest_predicted_price,loss_val
+0.5094339622641509,167.32700007429108,0.0003157113208948888,27,53,152,CBA.AX,lstm,0.1,0.00020511104188433984,53,32,0.04864594334728975,0.001359792484318226,163.03431701660156,0.014870318584144115

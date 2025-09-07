@@ -4,6 +4,8 @@ import pandas as pd
 from loguru import logger
 from sklearn.preprocessing import MinMaxScaler
 
+from config.data import *
+
 # Import existing modular code
 from .handle_nans import handle_nans
 from .create_sequence import create_sequences
@@ -14,21 +16,20 @@ from utils.plots import create_boxplot, create_candlestick_chart
 
 class DataProcessor:
     """
-    Complete data processor for multi-feature stock prediction satisfying Task 2 requirements:
-    
-    Requirements fulfilled:
-    a. Specify start/end dates for whole dataset
-    b. Handle NaN values in data
-    c. Multiple splitting methods (ratio/date/random)
-    d. Local caching for downloaded data
-    e. Feature scaling with scaler storage
+    Processing pipeline:
+    1. Load data with local caching & create chart for data inspection
+    2. Handle missing values 
+    3. Split data chronologically/randomly 
+    4. Scale features with scaler storage 
+    5. Create LSTM sequences for single-target prediction
+    6. Optional shuffling for training data
     
     Additional features:
     - Flexible sequence creation for LSTM
     - Future prediction with lookup_step
     """
     
-    def __init__(self, cache_dir='dev/cache'):
+    def __init__(self, cache_dir='cache'):
         """
         Initialize the DataProcessor.
         
@@ -43,16 +44,16 @@ class DataProcessor:
     
     def data_processing(
         self,
-        start_date,
-        end_date,
-        ticker,
-        lag_days=60,
-        lookup_step=1,
-        splitting_method='date',
-        test_size=0.2,
-        target_feature='close',
-        shuffle=False,
-        scale=True,
+        start_date=TRAIN_START,
+        end_date=TRAIN_END,
+        ticker=COMPANY,
+        lag_days=LAG_DAYS,
+        lookup_step=LOOKUP_STEP,
+        splitting_method=SPLIT_METHOD,
+        test_size=TEST_SIZE,
+        target_feature=PRICE_VALUE,
+        shuffle=SHUFFLE,
+        scale=SCALE,
     ):
         """
         Main data processing function for multi-input, single-target stock prediction.
@@ -74,13 +75,6 @@ class DataProcessor:
         Returns:
             dict: Complete processed dataset with metadata
             
-        Processing pipeline:
-        1. Load data with local caching & create chart for data inspection
-        2. Handle missing values 
-        3. Split data chronologically/randomly 
-        4. Scale features with scaler storage 
-        5. Create LSTM sequences for single-target prediction
-        6. Optional shuffling for training data
         """
         # Step 1: Load data with caching 
         df = load_stock_data(ticker, start_date, end_date, cache_dir=self.cache_dir)
@@ -94,7 +88,7 @@ class DataProcessor:
         
         # Create chart for data inspection
         try:
-            chart_path = f"dev/cache/inspect_data/{ticker}_{start_date}_to_{end_date}"
+            chart_path = f"cache/inspect_data/{ticker}_{start_date}_to_{end_date}"
             os.makedirs(os.path.dirname(chart_path), exist_ok=True)
             
             candlestick_path = f"{chart_path}/candlestick_chart.png"
@@ -187,11 +181,46 @@ class DataProcessor:
             test_scaled, lag_days, lookup_step, [target_feature], feature_columns
         )
         
+        # Use existing feature scaler as target scaler (no duplication needed)
+        if scale:
+            # The feature scaler for target is already our target scaler
+            target_key = f"{ticker}_{target_feature}"
+            if target_key in self.scalers:
+                # Copy the existing feature scaler as dedicated target scaler
+                self.scalers[f"{ticker}_{target_feature}_target"] = self.scalers[target_key]
+                logger.info(f"Using existing feature scaler as target scaler: range {self.scalers[target_key].data_min_[0]:.4f} to {self.scalers[target_key].data_max_[0]:.4f}")
+            else:
+                logger.warning(f"Target feature scaler not found: {target_key}")
+        else:
+            logger.info("No target scaler needed (scaling disabled)")
+        
+        # Extract current prices (last price in each input window) for trading metrics
+        # These are the prices at time t for each sample (before prediction horizon)
+        current_prices_train = train_df[target_feature].iloc[lag_days-1:-lookup_step].values
+
+        # For test: derive sequence-aligned current prices from the last timestep of each test window
+        # If scaled, inverse-transform using the target scaler; otherwise take values as-is.
+        close_idx = feature_columns.index(target_feature)
+        if scale:
+            curr_scaled_test = X_test[:, -1, close_idx].reshape(-1, 1)
+            current_prices_test = self.scalers[f"{ticker}_{target_feature}"].inverse_transform(curr_scaled_test).reshape(-1)
+        else:
+            current_prices_test = X_test[:, -1, close_idx].reshape(-1)
+
+        # Sanity checks to ensure alignment
+        assert len(y_train) == len(X_train) == len(current_prices_train), (
+            f"Train length mismatch: X={len(X_train)}, y={len(y_train)}, curr={len(current_prices_train)}"
+        )
+        assert len(y_test) == len(X_test) == len(current_prices_test), (
+            f"Test length mismatch: X={len(X_test)}, y={len(y_test)}, curr={len(current_prices_test)}"
+        )
+        
         # Step 6: Optional shuffling for training data
         if shuffle:
             # Only shuffle training data to maintain test set integrity
             indices = np.random.permutation(len(X_train))
             X_train, y_train = X_train[indices], y_train[indices]
+            current_prices_train = current_prices_train[indices]  # Shuffle current prices too
             logger.info("Training sequences shuffled")
 
 
@@ -202,6 +231,8 @@ class DataProcessor:
             'X_test': X_test,             # Test input sequences  
             'y_train': y_train,           # Training target values
             'y_test': y_test,             # Test target values
+            'current_prices_train': current_prices_train,  # Current prices for training
+            'current_prices_test': current_prices_test,    # Current prices for testing
             'test_df': test_df,           # Test dataframe
             
             # Metadata for model configuration
