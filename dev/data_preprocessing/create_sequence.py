@@ -1,4 +1,3 @@
-from loguru import logger
 import numpy as np
 
 def create_sequences(scaled_data, lag_days, lookup_step, target_columns_names, all_column_names):
@@ -25,7 +24,7 @@ def create_sequences(scaled_data, lag_days, lookup_step, target_columns_names, a
     """
     # Convert target column names to array indices
     target_indices = [all_column_names.index(col) for col in target_columns_names]
-    logger.info(f"Target indices: {target_indices} for columns: {target_columns_names}")
+    print(f"Target indices: {target_indices} for columns: {target_columns_names}")
     
     X, y = [], []
     
@@ -42,5 +41,5 @@ def create_sequences(scaled_data, lag_days, lookup_step, target_columns_names, a
     X = np.array(X)  # Shape: (n_samples, lag_days, n_features)
     y = np.array(y)  # Shape: (n_samples, n_targets)
     
-    logger.info(f"Created {len(X)} sequences with lag_days={lag_days}, lookup_step={lookup_step}")
+    print(f"Created {len(X)} sequences with lag_days={lag_days}, lookup_step={lookup_step}")
     return X, y

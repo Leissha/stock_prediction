@@ -1,6 +1,5 @@
 import os
 import pandas as pd
-from loguru import logger
 import yfinance as yf
 from utils.file_handling import save_data
 
@@ -16,14 +15,14 @@ def load_stock_data(company, start_date, end_date, cache_dir='dev/cache/raw_data
     
     # Check if cached data exists
     if os.path.exists(file_path):
-        logger.info(f"Loading cached data for {company}")
+        print(f"Loading cached data for {company}")
         data = pd.read_pickle(file_path)
         # Also normalize cached data columns if needed
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
         return data
     else:
-        logger.info(f"Downloading data for {company}")
+        print(f"Downloading data for {company}")
         data = yf.download(tickers=company, start=start_date, end=end_date)
         
         if data is not None and not data.empty:

@@ -74,35 +74,34 @@ def plot_predictions(actual_prices, predicted_prices, ticker, save_path="results
 
 def create_candlestick_chart(df, ticker, save_path="inspect_data/candlestick_chart.png", n_days=1):
     """
-    Create candlestick chart with SMA and EMA.
-    Each candlestick can represent n trading days (aggregated OHLC).
+    Create candlestick chart with SMA and EMA computed on a COPY of df.
+    This function is PURE: it must not mutate the caller's dataframe.
     """
-    # Parse index to datetimes and strip timezone (static exporter can choke on tz-aware)
-    df.index = pd.to_datetime(df.index, errors='coerce', utc=False)
+    # Work on a local copy only
+    loc = df[["open", "high", "low", "close"]].copy()
+    loc.index = pd.to_datetime(loc.index, errors='coerce', utc=False)
 
-    # Aggregate OHLC values if n_days > 1  
+    # Aggregate OHLC values if n_days > 1
     if n_days > 1:
-        df = df.resample(f'{n_days}D').agg({
-            'open': 'first', # first value in the window
-            'close': 'last', # last value in the window
-            'high': 'max',   # max value in the window
-            'low': 'min'     # min value in the window
+        loc = loc.resample(f'{n_days}D').agg({
+            'open': 'first',
+            'close': 'last',
+            'high': 'max',
+            'low': 'min'
         }).dropna()
 
-    # Add SMA and EMA if they don't exist
-    if 'SMA' not in df.columns:
-        df['SMA'] = df['close'].rolling(window=20, min_periods=1).mean()  # min_periods=1 to handle NaN
-    if 'EMA' not in df.columns:
-        df['EMA'] = df['close'].ewm(span=20, min_periods=1).mean()  # min_periods=1 to handle NaN
+    # Compute SMA and EMA for plotting only (do not add to original df)
+    sma_series = loc['close'].rolling(window=20, min_periods=1).mean()
+    ema_series = loc['close'].ewm(span=20, min_periods=1).mean()
 
     # Convert to plain Python lists (PNG export can't handle pandas objects)
-    x_list = df.index.to_pydatetime().tolist()
-    open_list = df["open"].tolist()
-    high_list = df["high"].tolist()
-    low_list = df["low"].tolist()
-    close_list = df["close"].tolist()
-    sma_list = df["SMA"].tolist()
-    ema_list = df["EMA"].tolist()
+    x_list = loc.index.to_pydatetime().tolist()
+    open_list = loc["open"].tolist()
+    high_list = loc["high"].tolist()
+    low_list = loc["low"].tolist()
+    close_list = loc["close"].tolist()
+    sma_list = sma_series.tolist()
+    ema_list = ema_series.tolist()
 
     # Base candlestick
     candlestick = go.Candlestick(
@@ -148,8 +147,9 @@ def create_candlestick_chart(df, ticker, save_path="inspect_data/candlestick_cha
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     
     fig.write_image(save_path)  
-    pio.renderers.default = "browser"
-    fig.show()
+    # web browser html options
+    # pio.renderers.default = "browser"
+    # fig.show()
     
 def create_boxplot(df, ticker, save_path="inspect_data/boxplot.png", n_days=20):
     """
@@ -182,5 +182,6 @@ def create_boxplot(df, ticker, save_path="inspect_data/boxplot.png", n_days=20):
     )
 
     fig.write_image(save_path)   
-    pio.renderers.default = "browser"
-    fig.show()
+    # web browser html options
+    # pio.renderers.default = "browser"
+    # fig.show()

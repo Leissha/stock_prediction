@@ -1,0 +1,20 @@
+TEST DATASET PERFORMANCE METRICS
+===============================
+Latest predicted price: $164.30
+Model loss on test data: 2.1581315994262695 (MSE)
+Mean Absolute Error: 1.1624528267038123
+Root Mean Squared Error: 1.4690580817574328
+Directional accuracy (on executed trades): 0.4896
+Trading accuracy (profitable trades): 0.4167
+Total buy profit: $8.19
+Total sell profit: $66.49
+Total profit: $74.68
+Profit per trade: $0.7779
+Profitable trades: 40/96 executed trades
+Trading threshold: 0.05% | Round-trip cost: ~0.20%
+
+MODEL CONFIGURATION
+==================
+Training features: ['close', 'high', 'low', 'open', 'volume']
+Target feature: close_return
+Feature scaling applied: True

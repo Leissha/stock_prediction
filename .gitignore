@@ -86,6 +86,7 @@ secrets.json
 # datasets/
 # raw_data/
 # processed_data/
+cache/
 
 # Model checkpoints and weights
 *.weights.h5

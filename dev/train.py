@@ -2,16 +2,6 @@
 # Authors: Kha Anh Nguyen :)
 # Date: 24/08/2025
 
-# Code modified from:
-# File: stock_prediction.py (Enhanced Version)
-# Authors: Bao Vo and Cheong Koo
-# Date: 14/07/2021(v1); 19/07/2021 (v2); 02/07/2024 (v3)
-
-# and
-# Title: Predicting Stock Prices with Python
-# Youtuble link: https://www.youtube.com/watch?v=PuZY9q-aKLw
-# By: NeuralNine
-
 import numpy as np
 import pandas as pd
 import os
@@ -21,12 +11,11 @@ from utils.file_handling import save_data
 from config.data import *
 from utils.plots import plot_predictions
 from argparse import ArgumentParser
-from model.lstm import LSTMModel
-from model.bidirectional_lstm import BidirectionalLSTMModel
+from model.tf_models import TFModel
 from utils.evaluating_utils import calculate_trading_metrics
 import tensorflow as tf    
 
-def predict_and_transform(model, x_test, y_test, target_scaler=None):
+def predict_and_descale(model, x_test, y_test, target_scaler=None):
     """
     Simplified prediction function with single-scaler inverse transform
     
@@ -37,21 +26,10 @@ def predict_and_transform(model, x_test, y_test, target_scaler=None):
         data: Dictionary containing scalers and metadata from DataProcessor
 
     Returns:
-        tuple: (actual_prices, predicted_prices, loss_val) - all in original scale
+        tuple: (actual_prices, predicted_prices, metrics) - all in original scale
     """
     # Make predictions using model
-    logger.info("Making predictions...")
-    predictions = model.predict(x_test)
-    logger.info(f"Predictions shape: {predictions.shape}")
-    
-    # Evaluate model performance on scaled data
-    logger.info("Evaluating model...")
-    try:
-        loss_val = model.evaluate(x_test, y_test)
-        logger.info(f"Model evaluation completed, loss: {loss_val}")
-    except Exception as e:
-        logger.error(f"Model evaluation failed: {e}")
-        loss_val = None
+    predictions, metrics = model.predict_and_evaluate(x_test, y_test)
     
     # Inverse transform using separate scaler for target feature
     if target_scaler is not None:
@@ -62,49 +40,91 @@ def predict_and_transform(model, x_test, y_test, target_scaler=None):
             predictions.reshape(-1, 1)
         ).reshape(-1)
         
-        logger.info(f"Inverse transformed using scaler: {target_scaler}")
+        print(f"Inverse transformed using scaler: {target_scaler}")
     else:
         # No scaling was applied, use values as-is
         actual_prices = y_test.reshape(-1)
         predicted_prices = predictions.reshape(-1)
-        logger.info("No inverse transform applied - values used as-is")
+        print("No inverse transform applied - values used as-is")
         
-    return actual_prices, predicted_prices, loss_val
+    return actual_prices, predicted_prices, metrics
 
 #------------------------------------------------------------------------------
 # Train Model
 #------------------------------------------------------------------------------
-def train(base_path) -> dict:
-    """Train the LSTM model on stock data"""
-    logger.info("=== TRAINING PHASE ===")
+def train(args) -> dict:
+    # data parameters:
+    ticker = args.company
+    start_date = args.start_date
+    end_date = args.end_date
+    lag_days = args.lag_days
+    test_size = args.test_size
+    split_method = args.split_method
+    shuffle = args.shuffle
+    scale = args.scale
+
+    # model parameters:
+    model_name = (args.model_name or 'lstm')
+    layers = args.layers
+    dropout_rate = args.dropout_rate
+    epochs = args.epochs
+    batch_size = args.batch_size
+
+    # prediction target:
+    target_feature = args.target_feature
+    # --log_ret also calls --target_ret
+    use_log_returns = args.log_ret
+    target_as_return = args.target_ret or args.log_ret
+
+    # Paths:
+    ret_suffix = "_ret" if target_as_return else ""
+    base_path = f"{ticker}_{start_date}_to_{end_date}_{target_feature}{ret_suffix}"
+    data_path = f"cache/processed_data/{base_path}.pkl"
+    
+    meta_path = f"{base_path}_seq-{lag_days}-step_1_{model_name}_layers{layers}_dropout{dropout_rate}_epochs{epochs}_bs{batch_size}"
+    model_path = f"cache/trained_models/{meta_path}.keras"
+    
+    plot_path = f"results/{meta_path}_predictions_chart.png"
+    report_path = f"results/{meta_path}.csv"
+    
+    # Create necessary directories
+    for dir in ["cache", "cache/trained_models", "cache/processed_data", "cache/raw_data", "cache/scalers", "results"]:
+        os.makedirs(f"{dir}", exist_ok=True)
+
+    print("="*60)
+    print("STOCK PREDICTION PIPELINE")
+    print("="*60)
+
+    print("=== TRAINING PHASE ===")
     
     # Check if data already processed
-    data_path = f"dev/cache/processed_data/{base_path}.pkl"
     if not os.path.exists(data_path):
         # Create DataProcessor instance
-        processor = DataProcessor(cache_dir='dev/cache')
+        processor = DataProcessor(cache_dir='cache')
         
         # Use the comprehensive data processing method
         data = processor.data_processing(
-            start_date=START_DATE,
-            end_date=END_DATE,
-            ticker=TICKER,				    # Stock company 
-            lag_days=LAG_DAYS,				# learning window size 
-            lookup_step=1,				    # prediction horizon
-            shuffle=SHUFFLE,				# shuffle training set or not
-            splitting_method=SPLIT_METHOD, 	# ratio /date /random split
-            test_size=TEST_SIZE,
-            target_feature='Close',			# Predict Close price
-            scale=SCALE
+            start_date=start_date,
+            end_date=end_date,
+            ticker=ticker,
+            lag_days=lag_days,
+            lookup_step=1,
+            shuffle=shuffle,
+            splitting_method=split_method,
+            test_size=test_size,
+            target_feature=target_feature,
+            scale=scale,
+            target_as_return=target_as_return,
+            use_log_returns=use_log_returns,
         )
         
         if data:
-            save_data(data, f"dev/cache/processed_data/{base_path}.pkl")
+            save_data(data, f"{data_path}")
         else: 
             logger.error("Data processing failed")
             exit(1)
     else:
-        logger.info("Loading cached processed data")
+        print("Loading cached processed data")
         data = pd.read_pickle(data_path)
 
     # Extract the processed data
@@ -113,69 +133,101 @@ def train(base_path) -> dict:
     x_test = data['X_test']
     y_test = data['y_test']
     
-    logger.info(f"Training data shape: x_train={x_train.shape}, y_train={y_train.shape}")
-    logger.info(f"Test data shape: x_test={x_test.shape}, y_test={y_test.shape}")
+    print(f"Training data shape: x_train={x_train.shape}, y_train={y_train.shape}")
+    print(f"Test data shape: x_test={x_test.shape}, y_test={y_test.shape}")
 
-    # Check if model already trained
-    model_path = f"dev/cache/trained_models/{base_path}.h5"
-    if not os.path.exists(model_path):
-        logger.info("Building and training model...")
-        # Build model based on specified type
-        if MODEL_NAME.lower() == "lstm":
-            model = LSTMModel(model_name=MODEL_NAME, model=None)
-        elif MODEL_NAME.lower() == "bidirectional_lstm":
-            model = BidirectionalLSTMModel(model_name=MODEL_NAME, model=None)
-        else:
-            logger.error(f"Invalid model name: {MODEL_NAME}. Please re-enter: lstm or bidirectional_lstm.")
-            exit(1)
-        
-        # Create the model architecture
-        if isinstance(model, BidirectionalLSTMModel):
-            model.create_model(sequence_length=x_train.shape[1], n_features=x_train.shape[2])
-        else:
-            model.create_model(x_train)
-        
-        # Train the model
-        model.train(x_train, y_train, epochs=25, batch_size=32, validation_split=0.1)
-        
-        # Save the trained model
-        model.save_model(model_path)
-        logger.info(f"Model saved to: {model_path}")
-    else:
-        logger.info("Using existing trained model")
-        # Load the existing model using TensorFlow
-        model = tf.keras.models.load_model(model_path)  # type: ignore
-
-    logger.info("=== TESTING PHASE ===")
+    # Init model instance
+    input_size = x_train.shape[2] # no_features
+    tf_model = TFModel(
+        input_size=input_size,
+        model_name=model_name,
+        layers=layers,
+        dropout_rate=dropout_rate,
+    )
     
-    target_feature = data['target_feature'].lower()
-    target_key = f"{TICKER}_{target_feature}"
+    # Check if model already trained
+    if not os.path.exists(model_path):
+        print("Building and training model...")
+        # Train the model
+        tf_model.fit(
+            x_train,
+            y_train,
+            epochs=epochs,
+            batch_size=batch_size,
+        )
+
+        # Save the trained model
+        tf_model.save_model(f"{model_path}")
+        print(f"Model saved to: {model_path}")
+
+        # Use the underlying Keras model
+        model = tf_model
+    else:
+        print("Using existing trained model")
+        # Load the existing Keras model and wrap it in TFModel
+        keras_model = tf.keras.models.load_model(f"{model_path}")  # type: ignore
+        
+        tf_model.model = keras_model  # Replace the built model with loaded one
+        model = tf_model
+
+    print("=== TESTING PHASE ===")
+    
+    tf_key = data['target_feature'].lower()
+    target_key = f"{ticker}_{tf_key}"
     target_scaler = data['scalers'].get(target_key)
     
-    # Make predictions on test set using simplified function
-    actual_prices, predicted_prices, loss_val = predict_and_transform(model, x_test, y_test, target_scaler)
+    # Make predictions on test set
+    actual_prices, predicted_prices, metrics = predict_and_descale(model, x_test, y_test, target_scaler)
+
+    # If model predicts returns, reconstruct next-day prices point-wise (no compounding)
+    if target_as_return:
+        test_df = data.get('test_df', pd.DataFrame()).copy()
+        
+        # Get base price column (target: 'close_return' -> get training 'close' price for first prediction)
+        base_price_col = tf_key.replace('_return', '')
+        
+        if base_price_col in test_df.columns:
+            # true future prices aligned to y_test
+            true_prices = test_df[base_price_col].values[-len(actual_prices):]
+            
+            # Use last available training-day price to derive first test prediction to avoid leakage
+            last_training_price = float(data.get('last_training_price', test_df[base_price_col].iloc[0]))
+            
+            # Use true previous prices as base
+            preds_ret = predicted_prices.reshape(-1)
+            
+            # Current prices for each step: day 0 uses seed, other days use TRUE previous prices
+            current_prices = [last_training_price] + list(true_prices[:-1])
+            
+            if use_log_returns:
+                # Log returns: p_t = p_{t-1} * exp(r_t)
+                predicted_prices = np.array(current_prices) * np.exp(preds_ret)
+            else:
+                # Simple returns: p_t = p_{t-1} * (1 + r_t)
+                predicted_prices = np.array(current_prices) * (1.0 + preds_ret)
+            actual_prices = true_prices
+        else:
+            logger.warning(f"Base price column '{tf_key}' not in test_df; available sample columns: {list(test_df.columns)[:8]}")
     
     # Generate plots
     test_df = data.get('test_df', pd.DataFrame())
     test_dates = test_df.index
-    plot_path = f"dev/results/{base_path}_predictions_chart.png"
-    plot_predictions(actual_prices, predicted_prices, TICKER, save_path=plot_path, dates=test_dates)
+    plot_predictions(actual_prices, predicted_prices, ticker, save_path=plot_path, dates=test_dates)
 
     # Calculate metrics and save to CSV
-    csv_filename = f"dev/results/{base_path}.csv"
     # Get the latest prediction as a plain float for reporting
-    pred_arr = np.asarray(predicted_prices).reshape(-1)
-    future_price = float(pred_arr[-1]) if pred_arr.size > 0 else 0.0
+    future_price = float(predicted_prices[-1])
     
     # Get current prices (previous day's actual prices for realistic trading)
     current_prices = []
     for i in range(len(actual_prices)):
         if i == 0:
-            # For first prediction, use the last training price
-            # We need to get this from the original test_df before scaling
-            current_prices.append(actual_prices[i])  # Fallback to same price
+            current_prices.append(actual_prices[i])
         else:
             current_prices.append(actual_prices[i-1])
+    
+    # Get training features from data
+    training_features = data['training_features']
     
     metrics = calculate_trading_metrics(
         actual_prices=actual_prices,
@@ -183,16 +235,20 @@ def train(base_path) -> dict:
         current_prices=current_prices,
         lookup_step=1,
         future_price=future_price,
-        loss_val=loss_val,
-        filename=csv_filename,
-        scale=SCALE,
-        training_features=data.get('feature_columns', ['Close']),
-        target_feature=data.get('target_feature', 'Close'),
+        loss_val=metrics['loss'],
+        mae_val=metrics['mae'],
+        rmse_val=metrics['rmse'],
+        filename=report_path,
+        scale=scale,
+        target_feature=data['target_feature'],
+        training_features=training_features,
     )
     
-    logger.info(f"Test results saved to: {csv_filename}")
+    print(f"Test results saved to: {report_path}")
+    print("="*60)
+    print("PIPELINE COMPLETED SUCCESSFULLY")
+    print("="*60)
     return metrics
-
 
 #------------------------------------------------------------------------------
 # Command Line Arguments
@@ -202,34 +258,46 @@ def parse_args():
     parser = ArgumentParser(description='Stock Price Prediction with LSTM')
     
     # Data loading arguments
-    parser.add_argument("--company", type=str, default=COMPANY,
+    parser.add_argument("--company", type=str, default=TICKER,
                        help="Company ticker symbol (default: %(default)s)")
-    parser.add_argument("--start_date", type=str, default=TRAIN_START,
+    parser.add_argument("--start_date", type=str, default=START_DATE,
                        help="Start date for data (default: %(default)s)")
-    parser.add_argument("--end_date", type=str, default=TRAIN_END,
+    parser.add_argument("--end_date", type=str, default=END_DATE,
                        help="End date for data (default: %(default)s)")
     
     # Feature selection arguments (using all OHLCV features, predicting Close price)
-    parser.add_argument("--target_feature", type=str, default=PRICE_VALUE,
+    parser.add_argument("--target_feature", type=str, default=TARGET_FEATURE,
                        help="Target feature to predict (default: Close)", choices=["Close", "Open", "High", "Low", "AdjClose", "Volume"])
+    parser.add_argument("--target_ret", action="store_true", default=False,
+                       help="Predict simple percentage returns instead of raw prices")
+    parser.add_argument("--log_ret", action="store_true", default=False,
+                       help="Predict log returns instead of raw prices")
     parser.add_argument("--lag_days", type=int, default=LAG_DAYS,
                        help="Number of days to look back for prediction (default: %(default)s)")
     
     # Data processing arguments
-    parser.add_argument("--test_size", type=float, default=0.2,
+    parser.add_argument("--test_size", type=float, default=TEST_SIZE,
                        help="Test size ratio (default: %(default)s)")
-    parser.add_argument("--split_method", type=str, default="date",
+    parser.add_argument("--split_method", type=str, default=SPLIT_METHOD,
                        choices=['date', 'random'],
                        help="Data splitting method (default: %(default)s)")
-    parser.add_argument("--shuffle", action="store_true", default=False,
+    parser.add_argument("--shuffle", action="store_true", default=SHUFFLE,
                        help="Shuffle data during training")
-    parser.add_argument("--scale", action="store_true", default=True,
+    parser.add_argument("--scale", action="store_true", default=SCALE,
                        help="Scale the data")
     
     # Model arguments
-    parser.add_argument("--model_name", type=str, default="lstm",
-                       help="Model type to use", 
-                       choices=['lstm', 'bidirectional_lstm'])
+    parser.add_argument("--model_name", type=str, default='lstm', 
+                        help="Model type to use", 
+                        choices=['lstm','gru','rnn','bilstm']) 
+    parser.add_argument("--layers", nargs='+', type=int, default=LAYERS,
+                        help="Layer sizes separated by space (e.g: 64 32 16 128)")
+    parser.add_argument("--dropout_rate", type=float, default=DROPOUT,
+                        help="Dropout rate for regularization (default: 0.2)")
+    parser.add_argument("--epochs", type=int, default=EPOCHS,
+                        help="Number of training epochs (default: 25)")
+    parser.add_argument("--batch_size", type=int, default=BATCH_SIZE,
+                        help="Batch size for training (default: 32)")
     
     return parser.parse_args()
 
@@ -239,30 +307,14 @@ def parse_args():
 if __name__ == "__main__":
     # Parse command line arguments
     args = parse_args()
-    TICKER = args.company
-    START_DATE = args.start_date
-    END_DATE = args.end_date
-    LAG_DAYS = args.lag_days
-    TEST_SIZE = args.test_size
-    SPLIT_METHOD = args.split_method
-    SHUFFLE = args.shuffle
-    SCALE = args.scale
-    MODEL_NAME = args.model_name
-    TARGET_FEATURE = args.target_feature    
-    base_path = f"{TICKER}_{START_DATE}_to_{END_DATE}_{TARGET_FEATURE}_seq-{LAG_DAYS}-step_1_{MODEL_NAME}"
     
     # Create necessary directories
     for dir in ["cache", "cache/trained_models", "cache/processed_data", "cache/raw_data", "cache/scalers", "results"]:
-        os.makedirs(f"dev/{dir}", exist_ok=True)
+        os.makedirs(f"{dir}", exist_ok=True)
     
     # Execute the clean DRY pipeline
     print("="*60)
     print("STOCK PREDICTION PIPELINE")
     print("="*60)
     
-    # 1. Train model
-    train(base_path)
-    
-    print("="*60)
-    print("PIPELINE COMPLETED SUCCESSFULLY")
-    print("="*60)
+    train(args)
