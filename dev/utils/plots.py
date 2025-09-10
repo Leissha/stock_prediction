@@ -2,6 +2,7 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
+import plotly.io as pio
 
 def plot_predictions(actual_prices, predicted_prices, ticker, save_path="results/price_chart.png", dates=None):
     """
@@ -30,6 +31,7 @@ def plot_predictions(actual_prices, predicted_prices, ticker, save_path="results
     plt.show()  # Display the plot
     plt.close()
     
+# Simple candlestick chart
 # def create_candlestick_chart(df, ticker, save_path="inspect_data/candlestick_chart.png", n_days=1):
 #     """
 #     Create candlestick chart for stock data.
@@ -75,8 +77,8 @@ def create_candlestick_chart(df, ticker, save_path="inspect_data/candlestick_cha
     Create candlestick chart with SMA and EMA.
     Each candlestick can represent n trading days (aggregated OHLC).
     """
-    # Ensure datetime index
-    df.index = pd.to_datetime(df.index)
+    # Parse index to datetimes and strip timezone (static exporter can choke on tz-aware)
+    df.index = pd.to_datetime(df.index, errors='coerce', utc=False)
 
     # Aggregate OHLC values if n_days > 1  
     if n_days > 1:
@@ -93,20 +95,29 @@ def create_candlestick_chart(df, ticker, save_path="inspect_data/candlestick_cha
     if 'EMA' not in df.columns:
         df['EMA'] = df['close'].ewm(span=20, min_periods=1).mean()  # min_periods=1 to handle NaN
 
+    # Convert to plain Python lists (PNG export can't handle pandas objects)
+    x_list = df.index.to_pydatetime().tolist()
+    open_list = df["open"].tolist()
+    high_list = df["high"].tolist()
+    low_list = df["low"].tolist()
+    close_list = df["close"].tolist()
+    sma_list = df["SMA"].tolist()
+    ema_list = df["EMA"].tolist()
+
     # Base candlestick
     candlestick = go.Candlestick(
-        x=df.index,
-        open=df['open'],
-        high=df['high'],
-        low=df['low'],
-        close=df['close'],
+        x=x_list,
+        open=open_list,
+        high=high_list,
+        low=low_list,
+        close=close_list,
         name="Candlestick"
     )
 
     # Simple Moving Average (SMA)
     sma = go.Scatter(
-        x=df.index,
-        y=df['SMA'],
+        x=x_list,
+        y=sma_list,
         mode='lines',
         line=dict(color='blue'),
         name="SMA (20)"
@@ -114,8 +125,8 @@ def create_candlestick_chart(df, ticker, save_path="inspect_data/candlestick_cha
 
     # Exponential Moving Average (EMA)
     ema = go.Scatter(
-        x=df.index,
-        y=df['EMA'],
+        x=x_list,
+        y=ema_list,
         mode='lines',
         line=dict(color='orange'),
         name="EMA (20)"
@@ -123,6 +134,7 @@ def create_candlestick_chart(df, ticker, save_path="inspect_data/candlestick_cha
 
     # Build figure
     fig = go.Figure(data=[candlestick, sma, ema])
+
     fig.update_layout(
         width=900, height=600,
         title=f"{ticker} Candlestick with SMA & EMA",
@@ -130,11 +142,13 @@ def create_candlestick_chart(df, ticker, save_path="inspect_data/candlestick_cha
         xaxis_title="Date",
         xaxis_rangeslider_visible=False  
     )
+    fig.update_xaxes(type="date", tickformat="%Y-%m-%d")
 
     # Ensure save directory exists
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     
     fig.write_image(save_path)  
+    pio.renderers.default = "browser"
     fig.show()
     
 def create_boxplot(df, ticker, save_path="inspect_data/boxplot.png", n_days=20):
@@ -168,4 +182,5 @@ def create_boxplot(df, ticker, save_path="inspect_data/boxplot.png", n_days=20):
     )
 
     fig.write_image(save_path)   
+    pio.renderers.default = "browser"
     fig.show()

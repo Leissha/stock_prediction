@@ -41,13 +41,13 @@ def predict_and_transform(model, x_test, y_test, target_scaler=None):
     """
     # Make predictions using model
     logger.info("Making predictions...")
-    predictions = model.predict(x_test, verbose=0)
+    predictions = model.predict(x_test)
     logger.info(f"Predictions shape: {predictions.shape}")
     
     # Evaluate model performance on scaled data
     logger.info("Evaluating model...")
     try:
-        loss_val = model.evaluate(x_test, y_test, verbose=0)
+        loss_val = model.evaluate(x_test, y_test)
         logger.info(f"Model evaluation completed, loss: {loss_val}")
     except Exception as e:
         logger.error(f"Model evaluation failed: {e}")
