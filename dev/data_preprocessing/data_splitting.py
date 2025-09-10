@@ -1,9 +1,9 @@
-from loguru import logger
 from sklearn.model_selection import train_test_split
+from config.data import SPLIT_METHOD, TEST_SIZE, RANDOM_STATE
 
-def split_data(df, method='date', test_size=0.2, random_state=42):
+def split_data(df, method=SPLIT_METHOD, test_size=TEST_SIZE, random_state=RANDOM_STATE):
     """
-    Split data using different methods (Requirement c)
+    Split data using different methods
     
     Args:
         df (pd.DataFrame): Input dataframe to split
@@ -19,7 +19,7 @@ def split_data(df, method='date', test_size=0.2, random_state=42):
     - 'ratio': Same as date but more explicit naming
     - 'random': Random sampling (breaks temporal dependencies, use with caution)
     """
-    logger.info(f"Splitting data using method: {method}, test_size: {test_size}")
+    print(f"Splitting data using method: {method}, test_size: {test_size}")
     
     if method in ['date', 'ratio']:
         # Chronological split - maintains temporal order
@@ -27,7 +27,7 @@ def split_data(df, method='date', test_size=0.2, random_state=42):
         split_point = int(len(df) * (1 - test_size))
         train_df = df.iloc[:split_point].copy()
         test_df = df.iloc[split_point:].copy()
-        logger.info(f"Chronological split at index {split_point}")
+        print(f"Chronological split at index {split_point}")
         
     elif method == 'random':
         # Random split - WARNING: breaks temporal dependencies
@@ -38,7 +38,7 @@ def split_data(df, method='date', test_size=0.2, random_state=42):
             random_state=random_state,
             shuffle=True
         )
-        logger.warning("Random split used - temporal dependencies broken!")
+        print("Random split used - temporal dependencies broken!")
         
     else:
         raise ValueError(f"Unknown split method: {method}. Use 'date', 'ratio', or 'random'")

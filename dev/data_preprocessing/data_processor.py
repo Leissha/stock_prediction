@@ -2,7 +2,9 @@ import os
 import numpy as np
 import pandas as pd
 from loguru import logger
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
+
+from config.data import *
 
 # Import existing modular code
 from .handle_nans import handle_nans
@@ -14,21 +16,20 @@ from utils.plots import create_boxplot, create_candlestick_chart
 
 class DataProcessor:
     """
-    Complete data processor for multi-feature stock prediction satisfying Task 2 requirements:
-    
-    Requirements fulfilled:
-    a. Specify start/end dates for whole dataset
-    b. Handle NaN values in data
-    c. Multiple splitting methods (ratio/date/random)
-    d. Local caching for downloaded data
-    e. Feature scaling with scaler storage
+    Processing pipeline:
+    1. Load data with local caching & create chart for data inspection
+    2. Handle missing values 
+    3. Split data chronologically/randomly 
+    4. Scale features with scaler storage 
+    5. Create LSTM sequences for single-target prediction
+    6. Optional shuffling for training data
     
     Additional features:
     - Flexible sequence creation for LSTM
     - Future prediction with lookup_step
     """
     
-    def __init__(self, cache_dir='dev/cache'):
+    def __init__(self, cache_dir='cache'):
         """
         Initialize the DataProcessor.
         
@@ -43,16 +44,18 @@ class DataProcessor:
     
     def data_processing(
         self,
-        start_date,
-        end_date,
-        ticker,
-        lag_days=60,
-        lookup_step=1,
-        splitting_method='date',
-        test_size=0.2,
-        target_feature='close',
-        shuffle=False,
-        scale=True,
+        start_date=START_DATE,
+        end_date=END_DATE,
+        ticker=TICKER,
+        lag_days=LAG_DAYS,
+        lookup_step=LOOKUP_STEP,
+        splitting_method=SPLIT_METHOD,
+        test_size=TEST_SIZE,
+        target_feature=TARGET_FEATURE,
+        shuffle=SHUFFLE,
+        scale=SCALE,
+        target_as_return: bool = False,
+        use_log_returns: bool = False,
     ):
         """
         Main data processing function for multi-input, single-target stock prediction.
@@ -65,7 +68,6 @@ class DataProcessor:
             lookup_step (int): Future prediction step (1=next day, 5=next week)
             splitting_method (str): Data splitting method - 'date', 'ratio', 'random' (Requirement c)
             test_size (float): Proportion of data for testing (0.0 to 1.0)
-            feature_columns (list): Input features (OHLCV) for prediction
             target_feature (str): Single target feature to predict (default: 'close')
             shuffle (bool): Whether to shuffle training sequences after creation
             scale (bool): Whether to scale features (Requirement e)
@@ -74,27 +76,19 @@ class DataProcessor:
         Returns:
             dict: Complete processed dataset with metadata
             
-        Processing pipeline:
-        1. Load data with local caching & create chart for data inspection
-        2. Handle missing values 
-        3. Split data chronologically/randomly 
-        4. Scale features with scaler storage 
-        5. Create LSTM sequences for single-target prediction
-        6. Optional shuffling for training data
         """
         # Step 1: Load data with caching 
         df = load_stock_data(ticker, start_date, end_date, cache_dir=self.cache_dir)
             
-        logger.info(f"Loaded data: {df.shape} from {start_date} to {end_date}")
-        logger.info(f"Available columns: {df.columns.tolist()}")
+        print(f"Loaded data: {df.shape} from {start_date} to {end_date}")
+        print(f"Available columns: {df.columns.tolist()}")
         
         # Standardize column names to lowercase for consistency
         df.columns = df.columns.str.lower()
-        feature_columns = df.columns.tolist()
         
         # Create chart for data inspection
         try:
-            chart_path = f"dev/cache/inspect_data/{ticker}_{start_date}_to_{end_date}"
+            chart_path = f"cache/inspect_data/{ticker}_{start_date}_to_{end_date}"
             os.makedirs(os.path.dirname(chart_path), exist_ok=True)
             
             candlestick_path = f"{chart_path}/candlestick_chart.png"
@@ -103,15 +97,15 @@ class DataProcessor:
             # Check if chart files exist
             if not os.path.exists(candlestick_path):
                 create_candlestick_chart(df, ticker, save_path=candlestick_path, n_days=1)  
-                logger.info(f"Candlestick chart saved to: {candlestick_path}")
+                print(f"Candlestick chart saved to: {candlestick_path}")
             else:
-                logger.info("Candlestick chart already exists")
+                print("Candlestick chart already exists")
                 
             if not os.path.exists(boxplot_path):
                 create_boxplot(df, ticker, save_path=boxplot_path, n_days=20)
-                logger.info(f"Boxplot saved to: {boxplot_path}")
+                print(f"Boxplot saved to: {boxplot_path}")
             else:
-                logger.info("Boxplot already exists")
+                print("Boxplot already exists")
                 
         except Exception as e:
             logger.error(f"Chart creation failed: {e}")
@@ -121,20 +115,26 @@ class DataProcessor:
             target_feature = 'close'  # Default to close price
         else:
             target_feature = target_feature.lower()
-            
-        # Validate target feature is in feature columns
-        if target_feature not in feature_columns:
-            raise ValueError(f"Target feature '{target_feature}' must be in feature_columns: {feature_columns}")
 
-        logger.info(f"Input features (OHLCV): {feature_columns}")
-        logger.info(f"Target feature: {target_feature}")
+        # Instead of price prediction, we can predict returns (simple % or log) for better model prediction
+        # https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.pct_change.html 
+        # e.g: OG y target [close]: 100, 105, 102, 103, 104, 105
+        # Return y target [close_return]: 0, 0.05, -0.0286, 0.0097, 0.0096, 0.0095
+        if target_as_return:
+            target_feature = return_feature(df, target_feature, use_log_returns=use_log_returns)
+
+        # Determine training features
+        training_features = df.columns.tolist()
+
+        print(f"Input features (OHLCV): {training_features}")
+        print(f"Target feature: {target_feature}")
         
         # Step 2: Handle missing values 
         df = handle_nans(df)
         
         # Step 3: Split data 
         train_df, test_df = split_data(df, method=splitting_method, test_size=test_size, random_state=42)
-        logger.info(f"Data split - Train: {train_df.shape}, Test: {test_df.shape}")
+        print(f"Data split - Train: {train_df.shape}, Test: {test_df.shape}")
         
         # Step 4: Feature scaling with separate scalers per feature 
         if scale:
@@ -144,13 +144,14 @@ class DataProcessor:
             # - Volume feature: millions of shares (1,000,000+)
             # - Separate scaling preserves individual feature characteristics
             
-            train_scaled = np.zeros_like(train_df[feature_columns].values)
-            test_scaled = np.zeros_like(test_df[feature_columns].values)
+            train_scaled = np.zeros_like(train_df[training_features].values)
+            test_scaled = np.zeros_like(test_df[training_features].values)
             
-            for i, feature in enumerate(feature_columns):
+            for i, feature in enumerate(training_features):
                 # Create and store individual scaler for each feature
                 scaler_key = f"{ticker}_{feature}"
-                self.scalers[scaler_key] = MinMaxScaler()
+                # self.scalers[scaler_key] = MinMaxScaler()
+                self.scalers[scaler_key] = StandardScaler()
                 
                 # Fit scaler only on training data to prevent data leakage
                 train_scaled[:, i] = self.scalers[scaler_key].fit_transform(
@@ -159,40 +160,43 @@ class DataProcessor:
                 test_scaled[:, i] = self.scalers[scaler_key].transform(
                     test_df[[feature]].values
                 ).reshape(-1)
-                
-                logger.info(f"Feature '{feature}' scaled: range {self.scalers[scaler_key].data_min_[0]:.4f} to {self.scalers[scaler_key].data_max_[0]:.4f}")
-                
             # Cache all feature scalers for future inference use
             scaler_bundle = {
                 "scalers": self.scalers,                 # per-feature scalers dict
-                "feature_columns": feature_columns,      # column order
+                "training_features": training_features,      # column order
                 "target_scaler_key": f"{ticker}_{target_feature}",  # just the key string
             }
             save_data(scaler_bundle, os.path.join(self.cache_dir, "scalers", f"{ticker}_{start_date}_to_{end_date}_scalers.pkl"))
             
-            logger.info(f"Applied separate MinMaxScaler to {len(feature_columns)} features")
+            print(f"Applied separate StandardScaler to {len(training_features)} features")
         else:
-            train_scaled = train_df[feature_columns].values
-            test_scaled = test_df[feature_columns].values
-            logger.info("No scaling applied")
+            train_scaled = train_df[training_features].values
+            test_scaled = test_df[training_features].values
+            print("No scaling applied")
         
         # Step 5: Create batch sequences with future prediction
-        logger.info(f"Creating sequences with lag_days={lag_days}, lookup_step={lookup_step}")
-        
+        print(f"Training:")
         X_train, y_train = create_sequences(
-            train_scaled, lag_days, lookup_step, [target_feature], feature_columns
+            train_scaled, lag_days, lookup_step, [target_feature], training_features
         )
+        print(f"Testing:")
         test_scaled = np.vstack([train_scaled[-lag_days:], test_scaled])
         X_test, y_test = create_sequences(
-            test_scaled, lag_days, lookup_step, [target_feature], feature_columns
+            test_scaled, lag_days, lookup_step, [target_feature], training_features
         )
+        
+        # If target is a return column, remove it from X channels
+        if target_feature.endswith('_return') and target_feature in training_features:
+            t_idx = training_features.index(target_feature)
+            X_train = np.delete(X_train, t_idx, axis=2)
+            X_test = np.delete(X_test, t_idx, axis=2)
+            training_features = [c for c in training_features if c != target_feature]
         
         # Step 6: Optional shuffling for training data
         if shuffle:
             # Only shuffle training data to maintain test set integrity
             indices = np.random.permutation(len(X_train))
             X_train, y_train = X_train[indices], y_train[indices]
-            logger.info("Training sequences shuffled")
 
 
         # Prepare comprehensive results dictionary
@@ -205,22 +209,56 @@ class DataProcessor:
             'test_df': test_df,           # Test dataframe
             
             # Metadata for model configuration
-            'feature_columns': feature_columns,    # Input feature names
+            'training_features': training_features,    # Input feature names
             'target_feature': target_feature,      # Target feature name
             'scalers': self.scalers,               # Scalers dict
+            # Save last available training-day price
+            'last_training_price': train_df[target_feature.replace('_return','')].iloc[-1]
         }
         
         # Log final statistics
-        logger.info("=" * 60)
-        logger.info("DATA PROCESSING COMPLETE")
-        logger.info(f"Training sequences: X{X_train.shape} → y{y_train.shape}")
-        logger.info(f"Test sequences: X{X_test.shape} → y{y_test.shape}")
+        print("=" * 60)
+        print("DATA PROCESSING COMPLETE")
+        print(f"Training sequences: X{X_train.shape} → y{y_train.shape}")
+        print(f"Test sequences: X{X_test.shape} → y{y_test.shape}")
         
         if len(X_train) > 0:
-            logger.info(f"Data value range: [{X_train.min():.4f}, {X_train.max():.4f}]")
+            print(f"Data value range: [{X_train.min():.4f}, {X_train.max():.4f}]")
             
-        logger.info(f"Total scalers stored: {len(self.scalers)}")
-        logger.info("=" * 60)
+        print(f"Total scalers stored: {len(self.scalers)}")
+        print("=" * 60)
         
         return result
 
+def return_feature(df, target_feature, use_log_returns):
+    """
+    Original in/out features:
+        training_features = ['close', 'high', 'low', 'open', 'volume']
+        target_feature = 'close' 
+
+    New in/out with return feature:
+    # Note that close_return not in the training set to avoid data leakage 
+        training_features = ['close', 'high', 'low', 'open', 'volume']     
+        target_feature = 'close_return'
+        
+    OG y target     [close]       : 100,   105,    102,    103,    104,    105
+    Return y target [close_return]:  0,   0.05, -0.0286, 0.0097, 0.0096, 0.0095
+    """
+    base_col = target_feature
+    return_col = f"{base_col}_return"
+    if use_log_returns:
+        # Log returns: r_t = log(p_t) - log(p_{t-1})
+        df[return_col] = df[base_col].astype(float).apply(np.log).diff().fillna(0).values
+    else:
+        # Simple percentage returns: r_t = (p_t - p_{t-1}) / p_{t-1}
+        # More intuitive, but asymmetric (can't lose >100% but can gain unlimited)
+        df[return_col] = df[base_col].pct_change().fillna(0).values
+
+    # Set the new target feature to the engineered return column
+    target_feature = return_col
+        
+    # Validate target feature exists in the dataframe
+    if target_feature not in df.columns:
+        raise ValueError(f"Target feature '{target_feature}' not found in df. Available columns: {list(df.columns)}")
+
+    return target_feature

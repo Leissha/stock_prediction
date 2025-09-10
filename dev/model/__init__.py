@@ -1,3 +1,3 @@
-from .lstm import LSTMModel
+from .tf_models import TFModel
 
-__all__ = ["LSTMModel"]
+__all__ = ["TFModel"]

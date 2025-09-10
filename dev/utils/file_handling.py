@@ -19,7 +19,7 @@ def save_data(data, file_path):
         pickle.dump(data, f)
     logger.info(f"Data cached to {file_path}")
 
-def load_scalers(ticker, cache_dir='dev/cache'):
+def load_scalers(ticker, cache_dir='cache'):
     """
     Load cached scalers for inference
     """

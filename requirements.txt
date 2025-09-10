@@ -11,6 +11,10 @@ matplotlib>=3.10.5
 plotly>=6.3.0
 kaleido>=1.0.0
 
+# Jupyter notebook (optional)
+jupyter>=1.0.0
+ipykernel>=6.30.1
+
 # Stock data fetching (we use yfinance, keeping yahoo-fin for compatibility)
 yfinance>=0.2.65
 # yahoo-fin>=0.8.9.1

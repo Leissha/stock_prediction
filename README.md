@@ -20,51 +20,54 @@ pip install -r requirements.txt
 ---
 
 
-
-### 🔧 **dev - Current Development Module (Task 2 Complete)**
-**Purpose**: Data processing with functionalities:
-1. Cache data
-2. Split choices (random, ratio, date)
-3. Handle NaNs
-4. Optional scaling
-5. More features with args...
-
 #### Basic Usage (Default Settings)
 ```bash
-# Use default settings (CBA.AX, Close price, 30 days)
-python dev/train.py
+# Navigate to dev directory first
+cd dev
+
+# Use default settings (CBA.AX, Close price, 60 days)
+python train.py
 ```
 
 #### Target Feature Selection
 ```bash
 # Predict different features (Close, Open, High, Low, Volume)
-python dev/train.py --company AAPL --target_feature Close --prediction_days 30
-python dev/train.py --company TSLA --target_feature Open --prediction_days 60
+python train.py --company AAPL --target_feature Close --prediction_days 30
+python train.py --company TSLA --target_feature Open --prediction_days 60
 ```
 
 
 #### Different Split Methods
 ```bash
 # Chronological split (default - recommended for time series)
-python dev/train.py --split_method date --test_size 0.2
+python train.py --split_method date --test_size 0.2
 
 # Random split (breaks temporal dependencies - use with caution)
-python dev/train.py --split_method random --test_size 0.2 --shuffle
+python train.py --split_method random --test_size 0.2 --shuffle
 ```
 
 #### Model Selection
 ```bash
 # Standard LSTM (default)
-python dev/train.py --model_name lstm
+python train.py --model_name lstm
 
 # Bidirectional LSTM for potentially better performance
-python dev/train.py --model_name bidirectional_lstm
+python train.py --model_name bilstm
+```
+
+#### Return-based Prediction
+```bash
+# Predict log returns instead of raw prices
+python train.py --log_ret
+
+# Predict simple percentage returns
+python train.py --target_ret
 ```
 
 #### More Configuration
 ```bash
 # Complete example showcasing all 
-python dev/train.py \
+python train.py \
     --company AAPL \
     --start_date 2022-01-01 \
     --end_date 2024-01-01 \
@@ -74,10 +77,9 @@ python dev/train.py \
     --test_size 0.2 \
     --scale \
     --model_name lstm
-# Task 2: Date range control, NaN handling, caching, separate scalers per feature
 ```
 
-**What it does (Task 2 Enhanced):**
+**What it does:**
 - **Multi-feature input**: Uses all OHLCV features automatically
 - **Flexible target selection**: Predict any feature (Close, Open, High, Low, Volume)  
 - **Date range control**: Specify exact start/end dates for data
@@ -99,33 +101,38 @@ python dev/train.py \
 | `--company` | str | CBA.AX | Company ticker symbol |
 | `--start_date` | str | 2 years ago | Start date for data |
 | `--end_date` | str | Today | End date for data |
-| `--features` | list | ['Close'] | Features to use (Close, Volume, Open, High, Low, AdjClose) |
-| `--prediction_days` | int | 60 | Number of days to look back |
+| `--target_feature` | str | Close | Target feature to predict (Close, Open, High, Low, AdjClose, Volume) |
+| `--target_ret` | flag | False | Predict simple percentage returns instead of raw prices |
+| `--log_ret` | flag | False | Predict log returns instead of raw prices |
+| `--lag_days` | int | 60 | Number of days to look back for prediction |
 | `--test_size` | float | 0.2 | Test set size ratio |
-| `--split_method` | str | 'date' | Split method (date, ratio, random) |
+| `--split_method` | str | 'date' | Split method (date, random) |
 | `--shuffle` | flag | True | Shuffle data (for random split) |
 | `--scale` | flag | True | Scale features |
-| `--model_name` | str | Required | Model type (lstm, bidirectional_lstm) |
+| `--model_name` | str | lstm | Model type (lstm, gru, rnn, bilstm) |
+| `--layers` | list | [50, 50, 50] | Layer sizes (e.g., 64 32 16) |
+| `--dropout_rate` | float | 0.2 | Dropout rate for regularization |
+| `--epochs` | int | 50 | Number of training epochs |
+| `--batch_size` | int | 32 | Batch size for training |
 
 ## Output Files
 
-- **Model**: `dev/trained_models/*.h5`
-- **Plots**: `dev/results/{some_config}.png`
-- **Cache**: `dev/cache/processed_data/*.pkl` and `dev/cache/raw_data.pkl`
+- **Model**: `cache/trained_models/*.keras`
+- **Plots**: `results/{some_config}.png`
+- **Cache**: `cache/processed_data/*.pkl` and `cache/raw_data/*.pkl`
+- **Results**: `results/{some_config}.csv`
 
 ## Project Structure
 ```
 stock-prediction-project/
 ├── dev/                    # Advanced development module
-│   ├── train.py            # Main training script
-│   ├── training_data/      # Cleaned data input for model training
-│   ├── model/              # AI Model architect
-│   ├── trained_models/     # Trained models cache
+│   ├── train.py            # Main training script (run from here)
+│   ├── model/              # AI Model architectures
 │   ├── data_preprocessing/ # Data processing modules
-│   ├── cache/              # Cache processed data
+│   ├── utils/              # Utilities (file_handling, eval, plots)
 │   ├── config/             # Configuration files
-│   └── results/            # Output files (accuracy.csv & plots)
-├── utils/                  # Shared utilities (file_handling, eval, plots)
+│   ├── cache/              # Cache processed data & models
+│   └── results/            # Output files (CSV & plots)
 ├── requirements.txt        # Package dependencies
 └── README.md               # This file
 ```
@@ -158,10 +165,11 @@ stock-prediction-project/
 
 ## Status
 - ✅ **Task 1 Complete**: Environment setup, code testing, performance comparison
-- ✅ **Task 2 Complete**: Data cleaning, code refactoring and modularization (for future extensibility & modifiablility :)
-- 🚧 **Task 3 in progress**: Candlestick chart
+- ✅ **Task 2 Complete**: Data cleaning, code refactoring and modularization
+- ✅ **Task 3 Complete**: Candlestick chart, return-based prediction, data leakage fixes
+- ✅ **Task 4 Complete**: Feature engineering, trading metrics, comprehensive evaluation
 
 ---
 
-**Last Updated**: August 28, 2025  
+**Last Updated**: September 11, 2025  
 **Course**: COS30018 Option C

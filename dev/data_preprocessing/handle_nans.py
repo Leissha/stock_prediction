@@ -1,4 +1,3 @@
-from loguru import logger
 import numpy as np
 
 def handle_nans(df):
@@ -16,14 +15,14 @@ def handle_nans(df):
     - More robust than dropping rows which loses valuable data
     """
     if df.isnull().any().any():
-        logger.info("NaN values detected, applying linear interpolation")
+        print("NaN values detected, applying linear interpolation")
         # Only interpolate numerical columns to avoid issues with date/string columns
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         df[numeric_cols] = df[numeric_cols].interpolate(
             method='linear',           # Linear interpolation between known values
             limit_direction='both'     # Fill gaps in both forward and backward directions
         )
-        logger.info(f"Interpolated NaN values in columns: {numeric_cols.tolist()}")
+        print(f"Interpolated NaN values in columns: {numeric_cols.tolist()}")
     else:
-        logger.info("No NaN values detected")
+        print("No NaN values detected")
     return df
