@@ -25,49 +25,48 @@ pip install -r requirements.txt
 # Navigate to dev directory first
 cd dev
 
-# Use default settings (CBA.AX, Close price, 60 days)
-python train.py
-```
+# Use default settings (CBA.AX, Close price, 1-day prediction)
+python main.py
 
 #### Target Feature Selection
 ```bash
 # Predict different features (Close, Open, High, Low, Volume)
-python train.py --company AAPL --target_feature Close --prediction_days 30
-python train.py --company TSLA --target_feature Open --prediction_days 60
+python main.py --company AAPL --target_feature Close --prediction_days 30
+python main.py --company TSLA --target_feature Open --prediction_days 60
 ```
 
 
 #### Different Split Methods
 ```bash
 # Chronological split (default - recommended for time series)
-python train.py --split_method date --test_size 0.2
+python main.py --split_method date --test_size 0.2
 
 # Random split (breaks temporal dependencies - use with caution)
-python train.py --split_method random --test_size 0.2 --shuffle
+python main.py --split_method random --test_size 0.2 --shuffle
 ```
 
 #### Model Selection
 ```bash
 # Standard LSTM (default)
-python train.py --model_name lstm
+python main.py --model_name lstm
 
 # Bidirectional LSTM for potentially better performance
-python train.py --model_name bilstm
+python main.py --model_name bilstm
 ```
 
 #### Return-based Prediction
 ```bash
 # Predict log returns instead of raw prices
-python train.py --log_ret
+python main.py --log_ret
 
 # Predict simple percentage returns
-python train.py --target_ret
+python main.py --target_ret
 ```
 
 #### More Configuration
 ```bash
 # Complete example showcasing all 
-python train.py \
+python main.py \
     --company AAPL \
     --start_date 2022-01-01 \
     --end_date 2024-01-01 \
@@ -105,6 +104,7 @@ python train.py \
 | `--target_ret` | flag | False | Predict simple percentage returns instead of raw prices |
 | `--log_ret` | flag | False | Predict log returns instead of raw prices |
 | `--lag_days` | int | 60 | Number of days to look back for prediction |
+| `--lookup_steps` | int | 1 | **Number of future days to predict (1=single-step, >1=multistep)** |
 | `--test_size` | float | 0.2 | Test set size ratio |
 | `--split_method` | str | 'date' | Split method (date, random) |
 | `--shuffle` | flag | True | Shuffle data (for random split) |
@@ -126,12 +126,29 @@ python train.py \
 ```
 stock-prediction-project/
 ├── dev/                    # Advanced development module
-│   ├── train.py            # Main training script (run from here)
+│   ├── main.py             # CLI interface and orchestration
+│   ├── train.py            # Model training script
+│   ├── test.py             # Model evaluation and prediction
 │   ├── model/              # AI Model architectures
+│   │   └── tf_models.py    # TensorFlow models (LSTM, BiLSTM, GRU, RNN)
 │   ├── data_preprocessing/ # Data processing modules
+│   │   ├── data_loading.py # yfinance download + local cache
+│   │   ├── data_processor.py # Main data processing pipeline
+│   │   ├── data_splitting.py # Train/test split methods
+│   │   ├── handle_nans.py  # NaN detection and interpolation
+│   │   └── create_sequence.py # LSTM sliding window creation
 │   ├── utils/              # Utilities (file_handling, eval, plots)
+│   │   ├── file_handling.py # File I/O operations
+│   │   ├── evaluating_utils.py # Evaluation metrics
+│   │   └── plots.py        # Visualization functions
 │   ├── config/             # Configuration files
+│   │   ├── data.py         # Data configuration constants
+│   │   └── run_config.py   # Runtime configuration dataclass
 │   ├── cache/              # Cache processed data & models
+│   │   ├── raw_data/       # Cached raw stock data
+│   │   ├── processed_data/ # Cached processed sequences
+│   │   ├── scalers/        # Cached feature scalers
+│   │   └── trained_models/ # Saved model files
 │   └── results/            # Output files (CSV & plots)
 ├── requirements.txt        # Package dependencies
 └── README.md               # This file
@@ -168,8 +185,9 @@ stock-prediction-project/
 - ✅ **Task 2 Complete**: Data cleaning, code refactoring and modularization
 - ✅ **Task 3 Complete**: Candlestick chart, return-based prediction, data leakage fixes
 - ✅ **Task 4 Complete**: Feature engineering, trading metrics, comprehensive evaluation
+- ✅ **Task 5 Complete**: Multivariate & multistep prediction implementation
 
 ---
 
-**Last Updated**: September 11, 2025  
+**Last Updated**: September 5, 2025  
 **Course**: COS30018 Option C
