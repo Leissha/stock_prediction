@@ -20,12 +20,13 @@ _LAYER = {
 
 class TFModel:
     def __init__(self, input_size: int, model_name: str = MODEL_NAME, layers: Optional[List[int]] = LAYERS,
-                 dropout_rate: float = DROPOUT):
+                 dropout_rate: float = DROPOUT, output_steps: int = 1):
         # Model configuration
         self.input_size = int(input_size)
         self.model_name = model_name.lower()
         self.layers = layers or LAYERS
         self.dropout_rate = float(dropout_rate)
+        self.output_steps = int(output_steps)  # For multistep prediction
         
         # Determine if bidirectional
         self.bidirectional = (self.model_name == 'bilstm')
@@ -62,7 +63,9 @@ class TFModel:
                 model.add(Dropout(self.dropout_rate))
         
         # Final prediction layer
-        model.add(Dense(units=1, activation='linear'))
+        # When output_steps=1: units=1 (single prediction)
+        # When output_steps>1: units=output_steps (multiple predictions)
+        model.add(Dense(units=self.output_steps, activation='linear'))
         
         return model
 
@@ -97,21 +100,43 @@ class TFModel:
         predictions_np = predictions.numpy()
         loss_np = loss.numpy()
         
-        # Calculate MAE manually
-        mae = np.mean(np.abs(y_test - predictions_np))
-        
-        # Calculate RMSE
-        rmse = np.sqrt(np.mean((y_test - predictions_np) ** 2))
-        
-        # Create metrics dictionary
-        metrics = {
-            'loss': loss_np,
-            'mae': mae,
-            'rmse': rmse,
-            'loss_name': 'mean_squared_error',  # From model compilation
-            'mae_name': 'mean_absolute_error',
-            'rmse_name': 'root_mean_squared_error'
-        }
+        # Calculate MAE and RMSE
+        if self.output_steps > 1:
+            # Multistep prediction: calculate metrics for each step
+            # Handle shape mismatch: y_test might be (n_samples, steps, 1) while predictions_np is (n_samples, steps)
+            if len(y_test.shape) == 3 and y_test.shape[2] == 1:
+                y_test_flat = y_test.reshape(y_test.shape[0], y_test.shape[1])
+            else:
+                y_test_flat = y_test
+                
+            mae_per_step = np.mean(np.abs(y_test_flat - predictions_np), axis=0)
+            rmse_per_step = np.sqrt(np.mean((y_test_flat - predictions_np) ** 2, axis=0))
+            overall_mae = np.mean(mae_per_step)
+            overall_rmse = np.sqrt(np.mean((y_test_flat - predictions_np) ** 2))
+            
+            metrics = {
+                'loss': loss_np,
+                'mae': overall_mae,
+                'rmse': overall_rmse,
+                'mae_per_step': mae_per_step,
+                'rmse_per_step': rmse_per_step,
+                'loss_name': 'mean_squared_error',
+                'mae_name': 'mean_absolute_error',
+                'rmse_name': 'root_mean_squared_error'
+            }
+        else:
+            # Single-step prediction: original logic
+            mae = np.mean(np.abs(y_test - predictions_np))
+            rmse = np.sqrt(np.mean((y_test - predictions_np) ** 2))
+            
+            metrics = {
+                'loss': loss_np,
+                'mae': mae,
+                'rmse': rmse,
+                'loss_name': 'mean_squared_error',
+                'mae_name': 'mean_absolute_error',
+                'rmse_name': 'root_mean_squared_error'
+            }
         
         return predictions_np, metrics
 

@@ -48,7 +48,7 @@ class DataProcessor:
         end_date=END_DATE,
         ticker=TICKER,
         lag_days=LAG_DAYS,
-        lookup_step=LOOKUP_STEP,
+        lookup_steps=LOOKUP_STEP,
         splitting_method=SPLIT_METHOD,
         test_size=TEST_SIZE,
         target_feature=TARGET_FEATURE,
@@ -177,12 +177,12 @@ class DataProcessor:
         # Step 5: Create batch sequences with future prediction
         print(f"Training:")
         X_train, y_train = create_sequences(
-            train_scaled, lag_days, lookup_step, [target_feature], training_features
+            train_scaled, lag_days, lookup_steps, [target_feature], training_features
         )
         print(f"Testing:")
         test_scaled = np.vstack([train_scaled[-lag_days:], test_scaled])
         X_test, y_test = create_sequences(
-            test_scaled, lag_days, lookup_step, [target_feature], training_features
+            test_scaled, lag_days, lookup_steps, [target_feature], training_features
         )
         
         # If target is a return column, remove it from X channels
@@ -209,9 +209,11 @@ class DataProcessor:
             'test_df': test_df,           # Test dataframe
             
             # Metadata for model configuration
-            'training_features': training_features,    # Input feature names
-            'target_feature': target_feature,      # Target feature name
-            'scalers': self.scalers,               # Scalers dict
+            'training_features': training_features, # Input feature names
+            'target_feature': target_feature,       # Target feature name
+            'scalers': self.scalers,                # Scalers dict
+            'lookup_steps': lookup_steps,           # Lookup steps 
+            'multistep_mode': lookup_steps > 1,     # Multistep mode flag
             # Save last available training-day price
             'last_training_price': train_df[target_feature.replace('_return','')].iloc[-1]
         }
