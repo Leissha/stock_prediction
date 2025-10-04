@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import plotly.io as pio
 
-def plot_predictions(actual_prices, predicted_prices, ticker, save_path="results/price_chart.png", dates=None):
+def plot_predictions(actual_prices, predicted_prices, ticker, save_path="results/price_chart.png", dates=None, train_dates=None, train_prices=None):
     """
     Plot the actual and predicted prices
     Args:
@@ -16,7 +16,12 @@ def plot_predictions(actual_prices, predicted_prices, ticker, save_path="results
     """
     if dates is None:
         dates = range(len(actual_prices))
-    plt.plot(dates, actual_prices, color="black", label=f"Actual {ticker} Price")
+    
+    # Plot training segment first for context if available
+    if train_dates is not None and train_prices is not None and len(train_dates) == len(train_prices) and len(train_prices) > 0:
+        plt.plot(train_dates, train_prices, color="blue", label=f"Lag Days {ticker} Price")
+    
+    plt.plot(dates, actual_prices, color="black", label=f"Actual {ticker} Price (Test)")
     plt.plot(dates, predicted_prices, color="green", label=f"Predicted {ticker} Price")
     plt.xlabel("Date")
     # Rotate x-axis labels for better readability
@@ -28,49 +33,7 @@ def plot_predictions(actual_prices, predicted_prices, ticker, save_path="results
     plt.tight_layout()  # Adjust layout to prevent label cutoff
     
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.show()  # Display the plot
     plt.close()
-    
-# Simple candlestick chart
-# def create_candlestick_chart(df, ticker, save_path="inspect_data/candlestick_chart.png", n_days=1):
-#     """
-#     Create candlestick chart for stock data.
-#     Each candlestick can represent n trading days (aggregated OHLC).
-#     """
-#     # Ensure datetime index for resampling
-#     df.index = pd.to_datetime(df.index)
-
-#     # Resample if n_days > 1 (aggregate OHLC values)
-#     if n_days > 1:
-#         df = df.resample(f'{n_days}D').agg({
-#             'open': 'first',
-#             'close': 'last',
-#             'high': 'max',
-#             'low': 'min'
-#         }).dropna()
-
-#     candlestick = go.Candlestick(
-#         x=df.index,
-#         open=df['open'],
-#         high=df['high'],
-#         low=df['low'],
-#         close=df['close'],
-#         name="Candlestick"
-#     )
-
-#     fig = go.Figure(data=[candlestick])
-
-#     fig.update_layout(
-#         width=800, height=600,
-#         title=f"{ticker} Candlestick Chart ({n_days}-day)",
-#         yaxis_title=f'{ticker} Stock Price',
-#     )
-
-#     # Ensure save directory exists
-#     os.makedirs(os.path.dirname(save_path), exist_ok=True)
-
-#     fig.write_image(save_path)   # needs kaleido installed
-#     fig.show()
 
 def create_candlestick_chart(df, ticker, save_path="inspect_data/candlestick_chart.png", n_days=1):
     """
@@ -185,3 +148,32 @@ def create_boxplot(df, ticker, save_path="inspect_data/boxplot.png", n_days=20):
     # web browser html options
     # pio.renderers.default = "browser"
     # fig.show()
+
+def plot_training_metrics(history, save_path="results/training_metrics.png"):
+    """
+    Plot training metrics (Loss, MAE, RMSE if available)
+    Args:
+        history: Keras training history object
+        save_path: Path to save the plot
+    """
+    plt.figure(figsize=(10, 6))
+    
+    epochs = range(1, len(history.history['loss']) + 1)
+    
+    # Plot multiple metrics
+    plt.plot(epochs, history.history['loss'], color='blue', linewidth=2, label='Loss (MSE)')
+    if 'mae' in history.history:
+        plt.plot(epochs, history.history['mae'], color='red', linewidth=2, label='MAE')
+    if 'rmse' in history.history:
+        plt.plot(epochs, history.history['rmse'], color='green', linewidth=2, label='RMSE')
+    
+    plt.title('Training Metrics Over Epochs')
+    plt.xlabel('Epoch')
+    plt.ylabel('Metric Value')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    
+    os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
