@@ -30,15 +30,15 @@ def create_sequences(scaled_data, lag_days, lookup_steps, target_columns_names, 
     
     # Window bounds:
     # start at i = lag_days so there is enough history for the first window
-    # stop at len(scaled_data) - lookup_steps + 1 so i+lookup_steps-1 is in-bounds
-    for i in range(lag_days, len(scaled_data) - lookup_steps + 1):
+    # stop at len(scaled_data) - lookup_steps to allow indexing i + step + 1 (t+1..t+k)
+    for i in range(lag_days, len(scaled_data) - lookup_steps):
         # Historical sequence: all features for past lag_days
         X.append(scaled_data[i-lag_days:i, :])
         
-        # Future target: create sequence of future values (unified logic)
+        # Future target: create sequence of future values (t+1 .. t+k)
         future_sequence = []
         for step in range(lookup_steps):
-            future_sequence.append(scaled_data[i + step, target_indices])
+            future_sequence.append(scaled_data[i + step + 1, target_indices])
         
         # Always return as array for consistency
         y.append(future_sequence)

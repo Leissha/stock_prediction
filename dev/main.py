@@ -3,8 +3,8 @@ from config.data import *
 from argparse import ArgumentParser
 from train import train
 from config.run_config import RunConfig
-from test import evaluate_and_plot
-from utils.evaluating_utils import calculate_trading_metrics
+from test import test_and_evaluate
+from utils.evaluating_utils import trading_simulation
 
 #------------------------------------------------------------------------------
 # Command Line Arguments
@@ -109,9 +109,11 @@ if __name__ == "__main__":
     print("STOCK PREDICTION PIPELINE")
     print("="*60)
 
+    # Train the model
     model, data, x_test, y_test, cfg = train(cfg)
 
-    res = evaluate_and_plot(
+    # Test, evaluate, and plot the model
+    res = test_and_evaluate(
         model=model,
         data=data,
         x_test=x_test,
@@ -122,12 +124,13 @@ if __name__ == "__main__":
         lag_days=cfg.lag_days,
         plot_path=cfg.plot_path,
     )
-
-    metrics = calculate_trading_metrics(
+    
+    # Calculate trading metrics
+    metrics = trading_simulation(
         actual_prices=res['actual_prices'],
         predicted_prices=res['predicted_prices'],
         current_prices=res['new_current_prices'],
-        lookup_step=1,
+        lookup_step=cfg.lookup_steps,
         future_price=res['new_future_price'],
         loss_val=res['new_metrics']['loss'],
         mae_val=res['new_metrics']['mae'],

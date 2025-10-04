@@ -77,8 +77,16 @@ def train(cfg):
             epochs=cfg.epochs,
             batch_size=cfg.batch_size,
         )
+        
+        # Generate training metrics chart
+        if hasattr(tf_model, 'training_history'):
+            from utils.plots import plot_training_metrics
+            metrics_plot_path = model_path.replace('.keras', '_metrics.png')
+            plot_training_metrics(tf_model.training_history, save_path=metrics_plot_path)
+            print(f"Training metrics chart saved to: {metrics_plot_path}")
+
+        
         tf_model.save_model(model_path)
-        print(f"Model saved to: {model_path}")
         model = tf_model
     else:
         print("Using existing trained model")

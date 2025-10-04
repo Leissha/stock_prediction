@@ -27,9 +27,5 @@ class RunConfig:
     report_path: str
     # Multistep prediction parameters
     lookup_steps: int = 1
-    
-    def __post_init__(self):
-        # Automatically detect multistep mode based on lookup_steps
-        self.multistep_mode = self.lookup_steps > 1
 
 

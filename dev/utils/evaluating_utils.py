@@ -1,4 +1,4 @@
-def calculate_trading_metrics(
+def trading_simulation(
     actual_prices, 
     predicted_prices, 
     current_prices=None,
@@ -24,6 +24,19 @@ def calculate_trading_metrics(
     actual_prices = np.array(actual_prices).flatten()
     predicted_prices = np.array(predicted_prices).flatten()
 
+    # --- Pure k-step directional accuracy (independent of trading) ---
+    pure_da = 0.0
+    if lookup_step is not None and isinstance(lookup_step, int) and lookup_step > 0 \
+            and len(actual_prices) > lookup_step and len(predicted_prices) > lookup_step:
+        curr_ref = actual_prices[:-lookup_step]
+        true_future_all = actual_prices[lookup_step:]
+        pred_future_all = predicted_prices[lookup_step:]
+        true_dir_all = np.sign(true_future_all - curr_ref)
+        pred_dir_all = np.sign(pred_future_all - curr_ref)
+        valid_mask = pred_dir_all != 0
+        if np.any(valid_mask):
+            pure_da = float(np.mean((pred_dir_all[valid_mask] == true_dir_all[valid_mask])))
+
     # --- hyperparams (simple & editable) ---
     threshold = 0.0005    # 0.05% no-trade zone (reduced for return predictions)
     trade_cost = 0.001    # 0.1% per side → ~0.2% round-trip
@@ -38,7 +51,11 @@ def calculate_trading_metrics(
         if current_prices is not None and i < len(current_prices):
             current = float(current_prices[i])
         else:
-            current = float(actual_prices[i-1] if i > 0 else actual_prices[i])
+            if i >= lookup_step:
+                current = float(actual_prices[i - lookup_step])
+            else:
+                # not enough history for a (current -> future) pair
+                continue
 
         pred_future = float(predicted_prices[i])
         true_future = float(actual_prices[i])
@@ -85,6 +102,7 @@ def calculate_trading_metrics(
     results = {
         # new but handy
         'directional_accuracy': directional_accuracy,
+        'pure_kstep_directional_accuracy': pure_da,
         # legacy/compatible keys
         'accuracy_score': accuracy_score,
         'total_buy_profit': total_buy_profit,
@@ -110,6 +128,7 @@ def calculate_trading_metrics(
                     f.write(f"Mean Absolute Error: {mae_val}\n")
                 if rmse_val is not None:
                     f.write(f"Root Mean Squared Error: {rmse_val}\n")
+                f.write(f"Pure k-step directional accuracy: {pure_da:.4f}\n")
                 f.write(f"Directional accuracy (on executed trades): {directional_accuracy:.4f}\n")
                 f.write(f"Trading accuracy (profitable trades): {accuracy_score:.4f}\n")
                 f.write(f"Total buy profit: ${total_buy_profit:.2f}\n")

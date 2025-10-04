@@ -77,14 +77,17 @@ class TFModel:
         opt = opt_cls(learning_rate=learning_rate)
         self.model.compile(optimizer=opt, loss='mean_squared_error', metrics=['mae'])
         
-        # Train
-        self.model.fit(
+        # Train and capture history
+        history = self.model.fit(
             x_train, y_train,
             epochs=epochs,
             batch_size=batch_size,
             verbose=1
         )
         
+        # Store history for plotting
+        self.training_history = history
+
         return self
 
     def predict_and_evaluate(self, x_test, y_test):

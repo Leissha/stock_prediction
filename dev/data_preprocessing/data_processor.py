@@ -206,6 +206,7 @@ class DataProcessor:
             'X_test': X_test,             # Test input sequences  
             'y_train': y_train,           # Training target values
             'y_test': y_test,             # Test target values
+            'train_df': train_df,         # Training dataframe
             'test_df': test_df,           # Test dataframe
             
             # Metadata for model configuration
@@ -213,7 +214,7 @@ class DataProcessor:
             'target_feature': target_feature,       # Target feature name
             'scalers': self.scalers,                # Scalers dict
             'lookup_steps': lookup_steps,           # Lookup steps 
-            'multistep_mode': lookup_steps > 1,     # Multistep mode flag
+            
             # Save last available training-day price
             'last_training_price': train_df[target_feature.replace('_return','')].iloc[-1]
         }
