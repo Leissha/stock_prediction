@@ -6,9 +6,8 @@ import pandas as pd
 import os
 from loguru import logger
 from data_preprocessing.data_processor import DataProcessor
+from model.sarimax import SARIMAXModel
 from utils.file_handling import save_data
-from model.tf_models import TFModel
-import tensorflow as tf
 
 #------------------------------------------------------------------------------
 # Train Model (load config from main.py)
@@ -60,38 +59,54 @@ def train(cfg):
     input_size = x_train.shape[2]
     lookup_steps = getattr(cfg, 'lookup_steps', 1)
     
-    tf_model = TFModel(
-        input_size=input_size,
-        model_name=(cfg.model_name or 'lstm'),
-        layers=cfg.layers,
-        dropout_rate=cfg.dropout_rate,
-        output_steps=lookup_steps,
-    )
-
-    # Train or load existing
-    if not os.path.exists(model_path):
-        print("Building and training model...")
-        tf_model.fit(
-            x_train,
-            y_train,
-            epochs=cfg.epochs,
-            batch_size=cfg.batch_size,
+    if cfg.model_name in ['lstm', 'gru', 'rnn', 'bilstm']:
+        # Lazy import TF deps
+        from model.tf_models import TFModel  # type: ignore
+        import tensorflow as tf  # type: ignore
+        
+        tf_model = TFModel(
+            input_size=input_size,
+            model_name=(cfg.model_name or 'lstm'),
+            layers=cfg.layers,
+            dropout_rate=cfg.dropout_rate,
+            output_steps=lookup_steps,
         )
-        
-        # Generate training metrics chart
-        if hasattr(tf_model, 'training_history'):
-            from utils.plots import plot_training_metrics
-            metrics_plot_path = model_path.replace('.keras', '_metrics.png')
-            plot_training_metrics(tf_model.training_history, save_path=metrics_plot_path)
-            print(f"Training metrics chart saved to: {metrics_plot_path}")
 
-        
-        tf_model.save_model(model_path)
-        model = tf_model
+        # Train or load existing
+        if not os.path.exists(model_path):
+            print("Building and training model...")
+            tf_model.fit(
+                x_train,
+                y_train,
+                epochs=cfg.epochs,
+                batch_size=cfg.batch_size,
+            )
+            
+            # Generate training metrics chart
+            if hasattr(tf_model, 'training_history'):
+                from utils.plots import plot_training_metrics
+                metrics_plot_path = model_path.replace('.keras', '_metrics.png')
+                plot_training_metrics(tf_model.training_history, save_path=metrics_plot_path)
+                print(f"Training metrics chart saved to: {metrics_plot_path}")
+
+            
+            tf_model.save_model(model_path)
+            model = tf_model
+        else:
+            print("Using existing trained model")
+            keras_model = tf.keras.models.load_model(model_path)  # type: ignore
+            tf_model.model = keras_model
+            model = tf_model
     else:
-        print("Using existing trained model")
-        keras_model = tf.keras.models.load_model(model_path)  # type: ignore
-        tf_model.model = keras_model
-        model = tf_model
+        # Classical SARIMAX model branch (uses flattened exogenous regressors)
+        print("Training SARIMAX model...")
+        # strict_1step=True because our exog (OHLCV) are not known for future horizons
+        arima_model = SARIMAXModel(
+            seasonal=getattr(cfg, 'sarimax_seasonal', False),
+            m=getattr(cfg, 'sarimax_m', 5),
+        )
+        # Pass data dict so SARIMA fits univariate target series (no exog leakage)
+        arima_model.fit(data=data)
+        model = arima_model
 
     return model, data, x_test, y_test, cfg

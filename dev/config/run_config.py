@@ -27,5 +27,8 @@ class RunConfig:
     report_path: str
     # Multistep prediction parameters
     lookup_steps: int = 1
+    # SARIMAX params
+    sarimax_seasonal: bool = False
+    sarimax_m: int = 5
 
 

@@ -3,7 +3,7 @@ from config.data import *
 from argparse import ArgumentParser
 from train import train
 from config.run_config import RunConfig
-from test import test_and_evaluate
+from test import test_and_evaluate  # type: ignore
 from utils.evaluating_utils import trading_simulation
 
 #------------------------------------------------------------------------------
@@ -46,7 +46,7 @@ def parse_args():
     # Model arguments
     parser.add_argument("--model_name", type=str, default='lstm', 
                         help="Model type to use", 
-                        choices=['lstm','gru','rnn','bilstm']) 
+                        choices=['lstm','gru','rnn','bilstm','ensemble','sarimax']) 
     parser.add_argument("--layers", nargs='+', type=int, default=LAYERS,
                         help="Layer sizes separated by space (e.g: 64 32 16 128)")
     parser.add_argument("--dropout_rate", type=float, default=DROPOUT,
@@ -59,6 +59,12 @@ def parse_args():
     # Multistep prediction arguments
     parser.add_argument("--lookup_steps", type=int, default=1,
                         help="Number of future days to predict (default: 1, >1 for multistep)")
+
+    # SARIMAX-specific arguments
+    parser.add_argument("--sarimax_seasonal", action="store_true", default=False,
+                        help="Enable seasonal SARIMAX (uses period m)")
+    parser.add_argument("--sarimax_m", type=int, default=5,
+                        help="Seasonal period m (e.g., 5 for trading-week seasonality)")
 
     
     return parser.parse_args()
@@ -103,6 +109,8 @@ if __name__ == "__main__":
         plot_path=f"results/{meta_path}_predictions_chart.png",
         report_path=f"results/{meta_path}.csv",
         lookup_steps=args.lookup_steps,
+        sarimax_seasonal=args.sarimax_seasonal,
+        sarimax_m=args.sarimax_m,
     )
 
     print("="*60)
@@ -129,12 +137,12 @@ if __name__ == "__main__":
     metrics = trading_simulation(
         actual_prices=res['actual_prices'],
         predicted_prices=res['predicted_prices'],
-        current_prices=res['new_current_prices'],
+        current_prices=res['current_prices'],
         lookup_step=cfg.lookup_steps,
-        future_price=res['new_future_price'],
-        loss_val=res['new_metrics']['loss'],
-        mae_val=res['new_metrics']['mae'],
-        rmse_val=res['new_metrics']['rmse'],
+        future_price=res['future_price'],
+        loss_val=res['metrics']['loss'],
+        mae_val=res['metrics']['mae'],
+        rmse_val=res['metrics']['rmse'],
         filename=cfg.report_path,
         scale=cfg.scale,
         target_feature=data['target_feature'],
