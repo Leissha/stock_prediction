@@ -78,18 +78,13 @@ python main.py \
     --model_name lstm
 ```
 
-**What it does:**
-- **Multi-feature input**: Uses all OHLCV features automatically
-- **Flexible target selection**: Predict any feature (Close, Open, High, Low, Volume)  
-- **Date range control**: Specify exact start/end dates for data
-- **Smart NaN handling**: Linear interpolation for missing stock data
-- **Multiple split methods**: Chronological, ratio, or random data splitting
-- **Advanced caching**: Raw data + processed data + scaler persistence
-- **Separate scalers**: Industry best practice for OHLCV features
-- **Data leakage prevention**: Scalers fit only on training data
-- Multiple model architectures (LSTM, Bidirectional LSTM)
-- Comprehensive trading-based evaluation metrics
-- Outputs: Model files, plots, accuracy CSV files
+**What it does (v2 pipeline):**
+- **Unified shapes**: X(N,L,F), y(N,K), preds(N,K)
+- **Single source of truth**: clean/target/split/scale/window in `dev/dataio/converters.py`, orchestrated by `dev/pipeline.py`
+- **Models**: `fit(...)`, `predict(X)->(N,K)` only; no internal descale/align/compound
+- **Validation split**: `--val_size` optional, passed to Keras `validation_data`
+- **Postprocess & metrics**: `dev/dataio/postprocess.py`, `dev/eval/metrics.py`
+- **Caching**: raw data, models, results under `dev/cache` and `dev/results`
 
 ---
 
@@ -109,7 +104,12 @@ python main.py \
 | `--split_method` | str | 'date' | Split method (date, random) |
 | `--shuffle` | flag | True | Shuffle data (for random split) |
 | `--scale` | flag | True | Scale features |
-| `--model_name` | str | lstm | Model type (lstm, gru, rnn, bilstm) |
+| `--model_name` | str | lstm | Model type (lstm, gru, rnn, bilstm, sarimax, ensemble) |
+| `--val_size` | float | 0.2 | Validation set size ratio |
+| `--sarimax_seasonal` | flag | False | Enable seasonal SARIMAX |
+| `--sarimax_m` | int | 5 | Seasonal period |
+| `--sarima_weight` | float | 0.2 | Ensemble SARIMA weight |
+| `--lstm_weight` | float | 0.8 | Ensemble LSTM weight |
 | `--layers` | list | [50, 50, 50] | Layer sizes (e.g., 64 32 16) |
 | `--dropout_rate` | float | 0.2 | Dropout rate for regularization |
 | `--epochs` | int | 50 | Number of training epochs |
@@ -127,23 +127,20 @@ python main.py \
 stock-prediction-project/
 ├── dev/                    # Advanced development module
 │   ├── main.py             # CLI interface and orchestration
-│   ├── train.py            # Model training script
-│   ├── test.py             # Model evaluation and prediction
 │   ├── model/              # AI Model architectures
-│   │   └── tf_models.py    # TensorFlow models (LSTM, BiLSTM, GRU, RNN)
-│   ├── data_preprocessing/ # Data processing modules
-│   │   ├── data_loading.py # yfinance download + local cache
-│   │   ├── data_processor.py # Main data processing pipeline
-│   │   ├── data_splitting.py # Train/test split methods
-│   │   ├── handle_nans.py  # NaN detection and interpolation
-│   │   └── create_sequence.py # LSTM sliding window creation
-│   ├── utils/              # Utilities (file_handling, eval, plots)
-│   │   ├── file_handling.py # File I/O operations
-│   │   ├── evaluating_utils.py # Evaluation metrics
-│   │   └── plots.py        # Visualization functions
+│   │   ├── tf_models.py    # TensorFlow models (LSTM, BiLSTM, GRU, RNN)
+│   │   ├── sarimax.py      # SARIMAX univariate model
+│   │   └── ensemble.py     # Weighted SARIMA+LSTM ensemble
+│   ├── dataio/             # Pre/post-processing
+│   │   ├── loading.py      # yfinance download + cache
+│   │   ├── converters.py   # clean, target, split, scale, window
+│   │   └── postprocess.py  # descale, to_prices
+│   ├── eval/               # Evaluation
+│   │   └── metrics.py      # MAE, RMSE, DA
+│   ├── schemas/            # Data contract
+│   │   └── bundle.py       # DataBundle (Pydantic)
 │   ├── config/             # Configuration files
-│   │   ├── data.py         # Data configuration constants
-│   │   └── run_config.py   # Runtime configuration dataclass
+│   │   └── data.py         # Central defaults & date helpers
 │   ├── cache/              # Cache processed data & models
 │   │   ├── raw_data/       # Cached raw stock data
 │   │   ├── processed_data/ # Cached processed sequences
@@ -189,5 +186,5 @@ stock-prediction-project/
 
 ---
 
-**Last Updated**: September 5, 2025  
+**Last Updated**: 10 October, 2025  
 **Course**: COS30018 Option C

@@ -10,6 +10,7 @@ class RunConfig:
     target_feature: str
     lag_days: int
     test_size: float
+    val_size: float
     split_method: str
     shuffle: bool
     scale: bool
@@ -30,5 +31,9 @@ class RunConfig:
     # SARIMAX params
     sarimax_seasonal: bool = False
     sarimax_m: int = 5
+    # Ensemble params
+    ensemble_method: str = 'weighted_average'  # 'weighted_average', 'stacking', 'voting'
+    sarima_weight: float = 0.2
+    lstm_weight: float = 0.8
 
 

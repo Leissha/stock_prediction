@@ -1,13 +1,15 @@
 """
-TensorFlow Model for lstm, gru, rnn, bilstm
+TensorFlow Model for LSTM, GRU, RNN, BiLSTM.
 """
 
+import numpy as np
 import tensorflow as tf
 from tensorflow.keras.optimizers import Adam, RMSprop, SGD  # type: ignore
 from loguru import logger
 from tensorflow.keras.models import Sequential  # type: ignore
 from tensorflow.keras.layers import LSTM, GRU, SimpleRNN, Dense, Dropout, Bidirectional  # type: ignore
 from typing import List, Optional
+import numpy as np
 from config.data import MODEL_NAME, LAYERS, DROPOUT
 
 # Layer type mapping
@@ -69,8 +71,10 @@ class TFModel:
         
         return model
 
-    def fit(self, x_train, y_train, epochs=25, batch_size=32, learning_rate=1e-3, optimizer: str = 'adam'):
-        """Train a TensorFlow model using built-in Keras features."""
+    def fit(self, x_train, y_train, epochs=25, batch_size=32, learning_rate=1e-3, optimizer: str = 'adam', validation_data=None):
+        """Train a TensorFlow model using built-in Keras features.
+        validation_data: optional tuple (X_val, y_val) to monitor validation loss.
+        """
         # Compile model
         optimizers = {'adam': Adam, 'rmsprop': RMSprop, 'sgd': SGD}
         opt_cls = optimizers[optimizer.lower()]
@@ -78,70 +82,37 @@ class TFModel:
         self.model.compile(optimizer=opt, loss='mean_squared_error', metrics=['mae'])
         
         # Train and capture history
-        history = self.model.fit(
-            x_train, y_train,
-            epochs=epochs,
-            batch_size=batch_size,
-            verbose=1
-        )
+        fit_kwargs = {
+            'x': x_train,
+            'y': y_train,
+            'epochs': epochs,
+            'batch_size': batch_size,
+            'verbose': 1,
+        }
+        if validation_data is not None:
+            fit_kwargs['validation_data'] = validation_data
+        history = self.model.fit(**fit_kwargs)
         
         # Store history for plotting
         self.training_history = history
 
         return self
 
-    def predict_and_evaluate(self, x_test, y_test):
-        """Make predictions with the model and return comprehensive metrics."""
+    def predict(self, x_test: np.ndarray) -> np.ndarray:
+        """
+        Generate predictions for test data.
+
+        Args:
+            x_test: Input sequences shape (N, L, F)
+
+        Returns:
+            predictions: Shape (N, K) where K = output_steps
+        """
         predictions = self.model(x_test)
-        # Use Keras 3+ API: compute_loss(x, y, y_pred, sample_weight=None, training=False)
-        loss = self.model.compute_loss(x_test, y_test, predictions, sample_weight=None, training=False)
-        
-        # Calculate additional metrics manually
-        import numpy as np
-        
-        # Convert to numpy for calculations to match y_test
         predictions_np = predictions.numpy()
-        loss_np = loss.numpy()
-        
-        # Calculate MAE and RMSE
-        if self.output_steps > 1:
-            # Multistep prediction: calculate metrics for each step
-            # Handle shape mismatch: y_test might be (n_samples, steps, 1) while predictions_np is (n_samples, steps)
-            if len(y_test.shape) == 3 and y_test.shape[2] == 1:
-                y_test_flat = y_test.reshape(y_test.shape[0], y_test.shape[1])
-            else:
-                y_test_flat = y_test
-                
-            mae_per_step = np.mean(np.abs(y_test_flat - predictions_np), axis=0)
-            rmse_per_step = np.sqrt(np.mean((y_test_flat - predictions_np) ** 2, axis=0))
-            overall_mae = np.mean(mae_per_step)
-            overall_rmse = np.sqrt(np.mean((y_test_flat - predictions_np) ** 2))
-            
-            metrics = {
-                'loss': loss_np,
-                'mae': overall_mae,
-                'rmse': overall_rmse,
-                'mae_per_step': mae_per_step,
-                'rmse_per_step': rmse_per_step,
-                'loss_name': 'mean_squared_error',
-                'mae_name': 'mean_absolute_error',
-                'rmse_name': 'root_mean_squared_error'
-            }
-        else:
-            # Single-step prediction: original logic
-            mae = np.mean(np.abs(y_test - predictions_np))
-            rmse = np.sqrt(np.mean((y_test - predictions_np) ** 2))
-            
-            metrics = {
-                'loss': loss_np,
-                'mae': mae,
-                'rmse': rmse,
-                'loss_name': 'mean_squared_error',
-                'mae_name': 'mean_absolute_error',
-                'rmse_name': 'root_mean_squared_error'
-            }
-        
-        return predictions_np, metrics
+        if predictions_np.ndim == 1:
+            predictions_np = predictions_np[:, None]
+        return predictions_np
 
     def save_model(self, filepath):
         """Save model to file."""
