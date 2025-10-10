@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import plotly.io as pio
 
-def plot_predictions(actual_prices, predicted_prices, ticker, save_path="results/price_chart.png", dates=None, train_dates=None, train_prices=None):
+def plot_predictions(actual_prices, predicted_prices, ticker, save_path, dates=None):
     """
     Plot the actual and predicted prices
     Args:
@@ -17,11 +17,7 @@ def plot_predictions(actual_prices, predicted_prices, ticker, save_path="results
     if dates is None:
         dates = range(len(actual_prices))
     
-    # Plot training segment first for context if available
-    if train_dates is not None and train_prices is not None and len(train_dates) == len(train_prices) and len(train_prices) > 0:
-        plt.plot(train_dates, train_prices, color="blue", label=f"Lag Days {ticker} Price")
-    
-    plt.plot(dates, actual_prices, color="black", label=f"Actual {ticker} Price (Test)")
+    plt.plot(dates, actual_prices, color="black", label=f"Actual {ticker} Price")
     plt.plot(dates, predicted_prices, color="green", label=f"Predicted {ticker} Price")
     plt.xlabel("Date")
     # Rotate x-axis labels for better readability
@@ -160,16 +156,14 @@ def plot_training_metrics(history, save_path="results/training_metrics.png"):
     
     epochs = range(1, len(history.history['loss']) + 1)
     
-    # Plot multiple metrics
-    plt.plot(epochs, history.history['loss'], color='blue', linewidth=2, label='Loss (MSE)')
-    if 'mae' in history.history:
-        plt.plot(epochs, history.history['mae'], color='red', linewidth=2, label='MAE')
-    if 'rmse' in history.history:
-        plt.plot(epochs, history.history['rmse'], color='green', linewidth=2, label='RMSE')
+    # Plot multiple metrics (train + validation if available)
+    plt.plot(epochs, history.history['loss'], color='blue', linewidth=2, label='Train Loss')
+    if 'val_loss' in history.history:
+        plt.plot(epochs, history.history['val_loss'], color='red', linewidth=2, label='Val Loss')
     
     plt.title('Training Metrics Over Epochs')
     plt.xlabel('Epoch')
-    plt.ylabel('Metric Value')
+    plt.ylabel('MSE Loss')
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()

@@ -8,7 +8,7 @@ class RunConfig:
     start_date: str
     end_date: str
     target_feature: str
-    lag_days: int
+    lookback: int
     test_size: float
     val_size: float
     split_method: str
@@ -27,7 +27,7 @@ class RunConfig:
     plot_path: str
     report_path: str
     # Multistep prediction parameters
-    lookup_steps: int = 1
+    horizon: int = 1
     # SARIMAX params
     sarimax_seasonal: bool = False
     sarimax_m: int = 5

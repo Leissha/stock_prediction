@@ -6,8 +6,9 @@ import os
 import numpy as np
 from argparse import ArgumentParser
 from config.data import *
-from pipeline import prepare_data, predict, to_price_space
+from pipeline import prepare_data, predict, predictions_to_prices
 from eval.metrics import compute_metrics
+from utils.plots import plot_predictions, create_candlestick_chart, create_boxplot, plot_training_metrics
 
 
 def parse_args():
@@ -30,7 +31,7 @@ def parse_args():
                         help="Predict simple percentage returns instead of raw prices")
     parser.add_argument("--log_ret", action="store_true", default=False,
                         help="Predict log returns instead of raw prices")
-    parser.add_argument("--lag_days", type=int, default=LAG_DAYS,
+    parser.add_argument("--lookback", type=int, default=LOOKBACK,
                         help="Number of days to look back (default: %(default)s)")
 
     # Data processing arguments
@@ -42,9 +43,12 @@ def parse_args():
                         help="Scale the data")
 
     # Model arguments
-    parser.add_argument("--model_name", type=str, default='lstm',
-                        help="Model type to use",
+    parser.add_argument("--model_name", type=str, default='lstm', 
+                        help="Model type to use", 
                         choices=['lstm', 'gru', 'rnn', 'bilstm', 'sarimax', 'ensemble'])
+    parser.add_argument("--ensemble_2", type=str, default='lstm',
+                        help="Base TF model for ensemble (when --ensemble_2)",
+                        choices=['lstm', 'gru', 'rnn', 'bilstm'])
     parser.add_argument("--layers", nargs='+', type=int, default=LAYERS,
                         help="Layer sizes separated by space (e.g: 64 32 16)")
     parser.add_argument("--dropout_rate", type=float, default=DROPOUT,
@@ -53,10 +57,16 @@ def parse_args():
                         help="Number of training epochs (default: 25)")
     parser.add_argument("--batch_size", type=int, default=BATCH_SIZE,
                         help="Batch size (default: 32)")
+    parser.add_argument("--optimizer", type=str, default='adam', choices=['adam','rmsprop','sgd'],
+                        help="Optimizer for TF models (default: adam)")
+    parser.add_argument("--learning_rate", type=float, default=1e-3,
+                        help="Learning rate for optimizer (default: 1e-3)")
+    parser.add_argument("--inspect_plots", action="store_true", default=False,
+                        help="Generate preprocessing inspection plots (candlestick, boxplot)")
 
     # Multistep prediction
-    parser.add_argument("--lookup_steps", type=int, default=1,
-                        help="Number of future days to predict (default: 1)")
+    parser.add_argument("--horizon", type=int, default=HORIZON,
+                        help="Number of future days to predict (default: %(default)s)")
 
     # SARIMAX-specific arguments
     parser.add_argument("--sarimax_seasonal", action="store_true", default=False,
@@ -67,8 +77,8 @@ def parse_args():
     # Ensemble-specific arguments
     parser.add_argument("--sarima_weight", type=float, default=0.5,
                         help="Weight for SARIMA in ensemble (default: 0.5)")
-    parser.add_argument("--lstm_weight", type=float, default=0.5,
-                        help="Weight for LSTM in ensemble (default: 0.5)")
+    parser.add_argument("--model_2_weight", type=float, default=0.5,
+                        help="Weight for Model 2 in ensemble (default: 0.5)")
 
     return parser.parse_args()
 
@@ -77,8 +87,7 @@ if __name__ == "__main__":
     args = parse_args()
 
     # Create directories
-    for d in ["cache", "cache/trained_models", "cache/processed_data",
-              "cache/raw_data", "cache/scalers", "results"]:
+    for d in ["cache", "cache/trained_models", "cache/processed_data", "cache/raw_data", "cache/scalers", "results"]:
         os.makedirs(d, exist_ok=True)
 
     # Determine target type suffix
@@ -89,8 +98,14 @@ if __name__ == "__main__":
     else:
         ret_suffix = ""
 
-    base_path = f"{args.company}_{args.start_date}_to_{args.end_date}_{args.target_feature}{ret_suffix}_step_{args.lookup_steps}"
-    meta_path = f"{base_path}_seq-{args.lag_days}_{args.model_name}_layers{args.layers}_dropout{args.dropout_rate}_epochs{args.epochs}_bs{args.batch_size}"
+    # Determine model tag
+    if args.model_name == 'ensemble':
+        meta_model_tag = f"ensemble+sarima+{args.ensemble_2}"
+    else:
+        meta_model_tag = f"{args.model_name}"
+
+    base_path = f"{args.company}_{args.start_date}_to_{args.end_date}_{args.target_feature}{ret_suffix}_step_{args.horizon}"
+    meta_path = f"{base_path}_seq-{args.lookback}_{meta_model_tag}_layers{args.layers}_dropout{args.dropout_rate}_epochs{args.epochs}_bs{args.batch_size}"
 
     print("=" * 60)
     print("STOCK PREDICTION PIPELINE")
@@ -104,8 +119,8 @@ if __name__ == "__main__":
         start_date=args.start_date,
         end_date=args.end_date,
         target_feature=args.target_feature,
-        lag_days=args.lag_days,
-        lookup_steps=args.lookup_steps,
+        lookback=args.lookback,
+        horizon=args.horizon,
         test_size=args.test_size,
         val_size=args.val_size,
         target_as_return=(args.target_ret or args.log_ret),
@@ -126,23 +141,24 @@ if __name__ == "__main__":
     print(f"y_test: {bundle.y_test.shape}")
     print(f"{'=' * 60}\n")
 
+    # Optional: preprocessing inspection plots using the training dataframe
+    if args.inspect_plots and bundle.train_df is not None:
+        try:
+            create_candlestick_chart(bundle.train_df, args.company, save_path=f"inspect_data/{meta_path}_candlestick.png", n_days=1)
+            create_boxplot(bundle.train_df, args.company, save_path=f"inspect_data/{meta_path}_boxplot.png", n_days=20)
+        except Exception:
+            pass
+
     # ========================================================================
     # Step 2: Initialize model
     # ========================================================================
     input_size = bundle.X_train.shape[2]
-    lookup_steps = bundle.horizon
 
     if args.model_name in ['lstm', 'gru', 'rnn', 'bilstm']:
         from model.tf_models import TFModel
         import tensorflow as tf
 
-        model = TFModel(
-            input_size=input_size,
-            model_name=args.model_name,
-            layers=args.layers,
-            dropout_rate=args.dropout_rate,
-            output_steps=lookup_steps,
-        )
+        model = TFModel(input_size=input_size, model_name=args.model_name, layers=args.layers, dropout_rate=args.dropout_rate, output_steps=args.horizon)
 
         model_path = f"cache/trained_models/{meta_path}.keras"
         if not os.path.exists(model_path):
@@ -155,10 +171,12 @@ if __name__ == "__main__":
                 bundle.y_train,
                 epochs=args.epochs,
                 batch_size=args.batch_size,
+                learning_rate=args.learning_rate,
+                optimizer=args.optimizer,
                 validation_data=val_tuple,
+                meta_path=meta_path,
             )
             model.save_model(model_path)
-            print(f"Model saved to {model_path}")
         else:
             print(f"Loading existing model from {model_path}")
             from tensorflow import keras as tf_keras  # type: ignore
@@ -191,16 +209,17 @@ if __name__ == "__main__":
     elif args.model_name == 'ensemble':
         # Ensemble builds its own submodels from the bundle
         from model.ensemble import EnsembleModel, EnsembleConfig
-        config = EnsembleConfig(sarima_weight=args.sarima_weight, lstm_weight=args.lstm_weight)
+        config = EnsembleConfig(sarima_weight=args.sarima_weight, model_2_weight=args.model_2_weight)
         model = EnsembleModel(config)
-        # LSTM cache path (independent of ensemble meta_path)
-        lstm_base_path = f"{args.company}_{args.start_date}_to_{args.end_date}_{args.target_feature}{ret_suffix}_step_{args.lookup_steps}"
-        lstm_meta_path = f"{lstm_base_path}_seq-{args.lag_days}_lstm_layers{args.layers}_dropout{args.dropout_rate}_epochs{args.epochs}_bs{args.batch_size}"
-        lstm_model_path = f"cache/trained_models/{lstm_meta_path}.keras"
+        
+        # TF model cache path
+        model_2_meta_path = f"{base_path}_seq-{args.lookback}_{args.ensemble_2}_layers{args.layers}_dropout{args.dropout_rate}_epochs{args.epochs}_bs{args.batch_size}"
+        # Extract only related args
         sarima_args = { 'seasonal': args.sarimax_seasonal, 'm': args.sarimax_m }
-        lstm_args = { 'layers': args.layers, 'dropout_rate': args.dropout_rate, 'epochs': args.epochs, 'batch_size': args.batch_size, 'model_name': 'lstm' }
-        model.fit_from_bundle(bundle, sarima_args, lstm_args, lstm_model_path)
-
+        model_2 = { 'layers': args.layers, 'dropout_rate': args.dropout_rate, 'epochs': args.epochs, 'batch_size': args.batch_size, 'model_name': args.ensemble_2, 'optimizer': args.optimizer, 'learning_rate': args.learning_rate }
+        
+        # Fit both models
+        model.fit_from_bundle(bundle, sarima_args, model_2, model_2_meta_path)
     else:
         raise ValueError(f"Unknown model: {args.model_name}")
 
@@ -218,7 +237,7 @@ if __name__ == "__main__":
     # Step 4: Convert to price space
     # ========================================================================
     print(f"\nConverting to price space...")
-    y_true_px, y_hat_px = to_price_space(y_true, y_hat, bundle)
+    y_true_px, y_hat_px = predictions_to_prices(y_true, y_hat, bundle)
 
     print(f"Price space - y_true: [{y_true_px.min():.2f}, {y_true_px.max():.2f}]")
     print(f"Price space - y_hat: [{y_hat_px.min():.2f}, {y_hat_px.max():.2f}]")
@@ -227,6 +246,16 @@ if __name__ == "__main__":
     # Step 5: Compute metrics
     # ========================================================================
     metrics = compute_metrics(y_true_px, y_hat_px)
+    # Plot prediction vs actual (first step in horizon)
+    # Build real date axis from test_df index if available
+    dates = None
+    if hasattr(bundle, 'test_df') and bundle.test_df is not None:
+        try:
+            dates = bundle.test_df.index[:len(y_true_px)]
+        except Exception:
+            dates = None
+    # pass meta and dates positionally to match signature (actual, predicted, ticker, meta=None, dates=None)
+    plot_predictions(y_true_px[:, 0], y_hat_px[:, 0], args.company, f"results/{meta_path}_predictions.png", dates)
 
     print(f"\n{'=' * 60}")
     print(f"EVALUATION RESULTS - {args.model_name.upper()}")
@@ -244,12 +273,12 @@ if __name__ == "__main__":
     })
     report_path = f"results/{meta_path}.csv"
     results_df.to_csv(report_path, index=False)
-    print(f"\n✅ Results saved to: {report_path}")
+    print(f"\nResults saved to: {report_path}")
 
     # Final status
     print(f"\n{'=' * 60}")
     if np.isfinite(y_hat_px).all() and (y_hat_px > 0).all():
-        print("STATUS: OK ✅")
+        print("STATUS: OK")
     else:
-        print("STATUS: FAIL ❌ (NaN/Inf/negative prices detected)")
+        print("STATUS: FAIL (NaN/Inf/negative prices detected)")
     print(f"{'=' * 60}")

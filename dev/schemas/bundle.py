@@ -14,10 +14,10 @@ class DataBundle(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     # Required train/test data
-    X_train: NDArray
-    y_train: NDArray
-    X_test: NDArray
-    y_test: NDArray
+    X_train: NDArray  # Shape: (N, L, F)
+    y_train: NDArray  # Shape: (N, K)
+    X_test: NDArray   # Shape: (N, L, F)
+    y_test: NDArray   # Shape: (N, K)
 
     # Optional validation data
     X_val: Optional[NDArray] = None

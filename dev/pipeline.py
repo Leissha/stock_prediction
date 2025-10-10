@@ -7,9 +7,9 @@ import numpy as np
 from typing import Tuple, Any
 from schemas.bundle import DataBundle, TargetMode
 from dataio.converters import (
-    clean_data, build_target, time_split, scale_features, window,
+    clean_data, build_target, time_split, scale_features, windows_train_val_test,
 )
-from dataio.postprocess import to_prices, descale
+from dataio.postprocess import returns_to_prices, descale
 from dataio.loading import load_stock_data
 
 
@@ -18,8 +18,8 @@ def prepare_data(
     start_date: str,
     end_date: str,
     target_feature: str = 'close',
-    lag_days: int = 60,
-    lookup_steps: int = 1,
+    lookback: int = 60,
+    horizon: int = 1,
     test_size: float = 0.2,
     val_size: float = 0.0,
     target_as_return: bool = False,
@@ -50,6 +50,9 @@ def prepare_data(
         target_mode = TargetMode.PRICE
 
     target_series, target_col_name = build_target(df, target_feature, mode=mode, use_log=use_log_returns)
+    # target_feature = original column name (e.g., "close")
+    # target_col_name = transformed column name (e.g., "close_return", "close_log_return")
+    
     # Align df to target series index when returns/log drops first row
     if len(target_series) != len(df):
         df = df.loc[target_series.index].copy()
@@ -71,31 +74,27 @@ def prepare_data(
         val_scaled = val_df[features].values if val_df is not None else None
         scalers = {}
 
+    # Extract target values using transformed column name
     target_train = train_df[target_col_name].to_numpy(dtype=float)
     target_test = test_df[target_col_name].to_numpy(dtype=float)
     target_val = val_df[target_col_name].to_numpy(dtype=float) if val_df is not None else None
 
-    # 6. Windows
-    lookback, horizon = lag_days, lookup_steps
-    X_train, y_train = window(train_scaled, target_train, lookback=lookback, horizon=horizon)
+    # 6. Create windows with proper alignment (single source of truth)
+    X_train, y_train, X_test, y_test, X_val, y_val = windows_train_val_test(
+        train_scaled, test_scaled, target_train, target_test,
+        lookback=lookback, horizon=horizon,
+        val_scaled=val_scaled, target_val=target_val
+    )
 
-    # Validation windows (if provided)
-    if val_scaled is not None and target_val is not None and val_df is not None:
-        val_aligned = np.vstack((train_scaled[-lookback:], val_scaled))
-        target_val_aligned = np.concatenate((target_train[-lookback:], target_val))
-        X_val, y_val = window(val_aligned, target_val_aligned, lookback=lookback, horizon=horizon)
-
+    # Calculate base prices for validation (if provided)
+    # Use original target_feature for base prices (needed for return→price conversion)
+    if X_val is not None and val_df is not None:
         n_val_samples = X_val.shape[0]
         base_prices_val = val_df[target_feature].iloc[:n_val_samples].to_numpy()
     else:
-        X_val, y_val, base_prices_val = None, None, None
+        base_prices_val = None
 
-    # Test windows
-    test_aligned = np.vstack((train_scaled[-lookback:], test_scaled))
-    target_test_aligned = np.concatenate((target_train[-lookback:], target_test))
-    X_test, y_test = window(test_aligned, target_test_aligned, lookback=lookback, horizon=horizon)
-
-    # 7. Base prices
+    # 7. Base prices for test set (use original target_feature for return→price conversion)
     n_test_samples = X_test.shape[0]
     base_start = 0
     base_end = base_start + n_test_samples
@@ -161,7 +160,7 @@ def predict(model: Any, bundle: DataBundle) -> np.ndarray:
         raise ValueError(f"Model {type(model)} has no predict method")
 
 
-def to_price_space(
+def predictions_to_prices(
     y_true: np.ndarray,
     y_hat: np.ndarray,
     bundle: DataBundle
@@ -185,14 +184,14 @@ def to_price_space(
     mode_value = bundle.target_mode.value if hasattr(bundle.target_mode, 'value') else bundle.target_mode
 
     assert bundle.base_prices_test is not None, "base_prices_test missing in bundle"
-    y_true_px = to_prices(
+    y_true_px = returns_to_prices(
         y_true,
         bundle.base_prices_test,
         mode=mode_value,
         use_log=bundle.use_log_returns
     )
 
-    y_hat_px = to_prices(
+    y_hat_px = returns_to_prices(
         y_hat,
         bundle.base_prices_test,
         mode=mode_value,

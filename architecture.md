@@ -1,86 +1,3 @@
-### Updated Architecture (v2)
-
-This update documents the unified data contract, validation split, standardized model interfaces, and single-source-of-truth module ownership.
-
-- **Unified data shapes**:
-  - **X**: (N, L, F)
-  - **y**: (N, K)
-  - **y_hat**: (N, K)
-- **Single source of truth**:
-  - Cleaning, target build, split, scaling, windowing live in `dataio.converters` and are orchestrated by `pipeline.prepare_data`.
-  - Models implement only `fit(...)` and `predict(X) -> (N,K)`; no internal descale/align/compound.
-  - Post-processing (`descale`, `to_prices`) lives in `dataio.postprocess`.
-  - Metrics live in `eval/metrics.py`.
-- **Validation split**:
-  - `time_split(df, test_size, val_size)` produces `train_df`, `val_df`, `test_df` (val optional).
-  - Scaling is fit on train; the same scalers transform val/test.
-  - Validation windows are created by prepending the last L rows of train to val before windowing, same as test.
-  - `DataBundle` optionally carries `X_val`, `y_val`, `base_prices_val`.
-- **Standardized model interfaces**:
-  - TensorFlow: `TFModel.fit(X_train, y_train, ..., validation_data=(X_val, y_val))`; `TFModel.predict(X_test)`.
-  - SARIMAX: fits on unscaled target from `bundle.train_df[target_feature]`; `predict(X_test)` returns (N,K) where K = forecast horizon.
-- **Evaluation boundary**:
-  - Models return scaled-target space; pipeline converts both truth and preds to price space for reporting with `to_price_space`.
-  - `compute_metrics` evaluates in price space (MAE, RMSE, Directional Accuracy@1).
-- **Naming conventions**:
-  - `X_train`, `y_train`, `X_val`, `y_val`, `X_test`, `y_test`.
-  - `train_scaled`, `val_scaled`, `test_scaled`.
-  - `lookback` (L), `horizon` (K), `features` (F).
-
-```mermaid
-flowchart TD
-  A[load_stock_data] --> B[clean_data]
-  B --> C[build_target]
-  C --> D[time_split(train/val/test)]
-  D --> E[scale_features (fit=train)]
-  E --> F[window(train → X_train,y_train)]
-  E --> G[window(val aligned → X_val,y_val)]
-  E --> H[window(test aligned → X_test,y_test)]
-
-  F --> I[DataBundle]
-  G --> I
-  H --> I
-
-  I --> J[Model.fit]
-  I --> K[Model.predict]
-  K --> L[to_price_space]
-  L --> M[compute_metrics]
-```
-
-```mermaid
-sequenceDiagram
-  participant Main
-  participant Pipeline
-  participant Converters as dataio.converters
-  participant Model
-  participant Post as dataio.postprocess
-  participant Eval as eval.metrics
-
-  Main->>Pipeline: prepare_data(args)
-  Pipeline->>Converters: clean_data → build_target → time_split
-  Pipeline->>Converters: scale_features(train|val|test)
-  Pipeline->>Converters: window(train|val|test)
-  Pipeline-->>Main: DataBundle(X/y for train|val|test)
-
-  Main->>Model: fit(X_train,y_train, validation_data=(X_val,y_val))
-  Main->>Model: predict(X_test)
-  Model-->>Main: y_hat (N,K)
-  Main->>Post: to_price_space(y_true, y_hat, bundle)
-  Post-->>Main: y_true_px, y_hat_px
-  Main->>Eval: compute_metrics(y_true_px, y_hat_px)
-  Eval-->>Main: MAE, RMSE, DA
-```
-
-Ownership by module:
-- **dataio.converters**: `clean_data`, `build_target`, `time_split`, `scale_features`, `window`.
-- **pipeline**: `prepare_data`, `predict`, `to_price_space`.
-- **model.tf_models**: `TFModel` (fit/predict only).
-- **model.sarimax**: `SARIMAXModel` (fit/predict only).
-- **dataio.postprocess**: `descale`, `to_prices`.
-- **eval.metrics**: `compute_metrics`.
-
-# Architecture and Data Contract
-
 ## Glossary (symbols used throughout the code)
 
 ### Shape Notation
@@ -113,12 +30,6 @@ Ownership by module:
 
 ## Naming Conventions
 
-### Function Parameters
-- ✅ Use `lookback` instead of `L` or `lag_days`
-- ✅ Use `horizon` or `forecast_horizon` instead of `K` or `lookup_steps`
-- ✅ Use `sample_idx` and `step` instead of `i` and `k` in loops
-- ❌ DO NOT pass `feature_cols` to `window()` - F is inferred from shape
-
 ### Model Interface
 - All model classes must implement: `predict(X_test, y_test=None) -> np.ndarray`
   - Returns shape: **(N, K)**
@@ -142,8 +53,8 @@ graph TB
 
     subgraph DATAIO[dataio/ - Data I/O]
         LOAD[loading.py<br/>load_stock_data]
-        CONV[converters.py<br/>clean, target, split, scale, window]
-        POST[postprocess.py<br/>descale, to_prices]
+        CONV[converters.py<br/>clean, target, split, scale, window, create_windows_with_alignment]
+        POST[postprocess.py<br/>descale, returns_to_prices]
     end
 
     subgraph SCHEMAS[schemas/ - Data Contract]
@@ -206,7 +117,7 @@ graph LR
     end
 
     subgraph Stage4[Stage 4: Window]
-        WINDOW[window<br/>create sequences X:N,L,F]
+        WINDOW[windows_train_val_test<br/>X:N,L,F and y:N,K]
     end
 
     subgraph Stage5[Stage 5: Validate]
@@ -485,12 +396,13 @@ sequenceDiagram
     PL->>CV: scale_features(train, test, features)
     CV-->>PL: (train_scaled, test_scaled, scalers)
 
-    Note over PL,CV: Stage 4: Create Windows
-    PL->>CV: window(train_scaled, target_train, L, K)
+    Note over PL,CV: Stage 4: Create Windows (with alignment)
+    PL->>CV: create_windows_with_alignment(train_scaled, test_scaled, target_train, target_test, L, K, val_scaled)
     CV-->>PL: X_train:(N,L,F), y_train:(N,K)
-    PL->>PL: Align test with last L of train
-    PL->>CV: window(test_aligned, target_test, L, K)
     CV-->>PL: X_test:(N,L,F), y_test:(N,K)
+    opt if val_scaled provided
+        CV-->>PL: X_val:(N,L,F), y_val:(N,K)
+    end
 
     Note over PL,SC: Stage 5: Validate Bundle
     PL->>SC: DataBundle(X, y, metadata)
@@ -509,9 +421,9 @@ sequenceDiagram
         PP-->>PL: y_true_descaled
         PL->>PP: descale(y_hat, target_scaler)
         PP-->>PL: y_hat_descaled
-        PL->>PP: to_prices(y_true, base_prices, mode)
+        PL->>PP: returns_to_prices(y_true, base_prices, mode)
         PP-->>PL: y_true_prices:(N,K)
-        PL->>PP: to_prices(y_hat, base_prices, mode)
+        PL->>PP: returns_to_prices(y_hat, base_prices, mode)
         PP-->>PL: y_hat_prices:(N,K)
     else mode == price
         PL->>PL: Use predictions as-is
@@ -521,83 +433,6 @@ sequenceDiagram
     PL->>PL: compute_metrics(y_true, y_hat)
     PL-->>CLI: (metrics, predictions, artifacts)
 ```
-
----
-
-## Key Design Decisions
-
-### Why No `feature_cols` in `window()`?
-```python
-# ❌ OLD (redundant parameter):
-def window(features_scaled, feature_cols, target, lookback, horizon):
-    M, F = features_scaled.shape  # F comes from shape!
-    # feature_cols never used...
-
-# ✅ NEW (clean signature):
-def window(features_scaled, target, lookback, horizon):
-    M, F = features_scaled.shape  # F inferred automatically
-```
-
-**Rationale:**
-- Number of features (F) is already encoded in `features_scaled.shape[1]`
-- Passing `feature_cols` creates redundancy and potential for bugs
-- If shape[1] != len(feature_cols), which is correct?
-- Simpler signature = less error-prone
-
-### Why Separate `sample_idx` and `step`?
-```python
-# ❌ OLD (unclear):
-for i in range(N):
-    for k in range(K):
-        prices[i, k] = ...
-
-# ✅ NEW (self-documenting):
-for sample_idx in range(N):
-    for step in range(K):
-        prices[sample_idx, step] = ...
-```
-
-**Rationale:**
-- `i, k` are mathematical conventions but vague in code
-- `sample_idx` clearly indicates "which window/sample"
-- `step` clearly indicates "which forecast step ahead"
-- Better for code review and maintenance
-
-### Why `current_price` instead of `base`?
-```python
-# ❌ OLD (ambiguous):
-base = base_prices[i]
-for k in range(K):
-    base *= (1 + returns[i, k])  # "base" is mutating!
-    prices[i, k] = base
-
-# ✅ NEW (clear intent):
-current_price = base_prices[sample_idx]
-for step in range(K):
-    current_price *= (1 + returns[sample_idx, step])
-    prices[sample_idx, step] = current_price
-```
-
-**Rationale:**
-- `base` implies static/unchanging value
-- `current_price` shows it's the running compounded price
-- Makes the compounding logic easier to understand
-
----
-
-## Testing & Validation
-
-### Unit Tests Coverage
-- [x] `window()` shape correctness: X:(N,L,F), y:(N,K)
-- [x] `to_prices()` roundtrip: returns → prices → returns
-- [x] `descale()` inverse: scaled → descale ≈ original
-- [x] DataBundle validation: all shape contracts
-- [x] Model interface: all models return (N, K)
-
-### Integration Tests
-- [x] End-to-end LSTM: prepare_data → train → predict → evaluate
-- [x] End-to-end SARIMAX: prepare_data → train → predict → evaluate
-- [x] Ensemble: combine LSTM + SARIMAX predictions
 
 ---
 
@@ -611,32 +446,6 @@ cache/
   trained_models/     # Saved model weights
     CBA.AX_..._lstm_....keras
 ```
-
-### Memory Efficiency
-- Use `np.float32` for windowed arrays (reduces memory by 50%)
-- Preallocate arrays in `window()` instead of appending
-- Cache scaled features to avoid recomputation
-
-### Computation Bottlenecks
-1. **window()**: O(N × L × F) - most expensive step
-2. **scale_features()**: O(M × F) per scaler fit
-3. **to_prices()**: O(N × K) compounding loop
-
----
-
-## Future Improvements
-
-### Potential Optimizations
-- [ ] Vectorize `to_prices()` loop (use np.cumprod)
-- [ ] Add GPU support for window creation
-- [ ] Implement parallel data loading for multiple tickers
-- [ ] Add LRU cache for `window()` results
-
-### Feature Requests
-- [ ] Support for exogenous features in SARIMAX
-- [ ] Multi-target prediction (predict multiple stocks)
-- [ ] Online learning / incremental updates
-- [ ] Hyperparameter tuning with Optuna
 
 ---
 

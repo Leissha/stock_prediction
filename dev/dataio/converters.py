@@ -165,7 +165,7 @@ def scale_features(
     return train_scaled, test_scaled, val_scaled, scalers
 
 
-def window(
+def windows_train_test(
     features_scaled: np.ndarray,
     target_series: np.ndarray,
     lookback: int,
@@ -239,56 +239,51 @@ def window(
     return X, y
 
 
-# Example usage
-if __name__ == "__main__":
-    # Demo pipeline
-    print("Demo: Data Converters Pipeline")
+def windows_train_val_test(
+    train_scaled: np.ndarray,
+    test_scaled: np.ndarray,
+    target_train: np.ndarray,
+    target_test: np.ndarray,
+    lookback: int,
+    horizon: int,
+    val_scaled: Optional[np.ndarray] = None,
+    target_val: Optional[np.ndarray] = None,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
+    """
+    Create windows for train/test/val with proper alignment.
+    
+    This function handles the complex alignment logic that was previously
+    scattered in the pipeline, ensuring single source of truth.
+    
+    Args:
+        train_scaled: Training features (M_train, F)
+        test_scaled: Test features (M_test, F)
+        target_train: Training targets (M_train,)
+        target_test: Test targets (M_test,)
+        lookback: Sequence length L
+        horizon: Prediction steps K
+        val_scaled: Optional validation features (M_val, F)
+        target_val: Optional validation targets (M_val,)
+    
+    Returns:
+        (X_train, y_train, X_test, y_test, X_val, y_val)
+        All X: (N, L, F), all y: (N, K)
+    """
+    # Training windows (no alignment needed)
+    X_train, y_train = windows_train_test(train_scaled, target_train, lookback=lookback, horizon=horizon)
+    
+    # Test windows: align with last L of train
+    test_aligned = np.vstack((train_scaled[-lookback:], test_scaled))
+    target_test_aligned = np.concatenate((target_train[-lookback:], target_test))
+    X_test, y_test = windows_train_test(test_aligned, target_test_aligned, lookback=lookback, horizon=horizon)
+    
+    # Validation windows: align with last L of train (if provided)
+    if val_scaled is not None and target_val is not None:
+        val_aligned = np.vstack((train_scaled[-lookback:], val_scaled))
+        target_val_aligned = np.concatenate((target_train[-lookback:], target_val))
+        X_val, y_val = windows_train_test(val_aligned, target_val_aligned, lookback=lookback, horizon=horizon)
+    else:
+        X_val, y_val = None, None
+    
+    return X_train, y_train, X_test, y_test, X_val, y_val
 
-    # 1. Create dummy data
-    dates = pd.date_range("2023-01-01", periods=100, freq="D")
-    df = pd.DataFrame(
-        {
-            "open": np.random.randn(100).cumsum() + 100,
-            "high": np.random.randn(100).cumsum() + 105,
-            "low": np.random.randn(100).cumsum() + 95,
-            "close": np.random.randn(100).cumsum() + 100,
-            "volume": np.random.randint(1000, 10000, 100),
-        },
-        index=dates,
-    )
-
-    print(f"1. Raw data: {df.shape}")
-
-    # 2. Clean
-    df = clean_data(df)
-    print(f"2. After clean: {df.shape}")
-
-    # 3. Build target (returns Series, align back into df)
-    tgt_series, target_col = build_target(df, "close", mode="return", use_log=False)
-    df = df.loc[tgt_series.index].copy()
-    df[target_col] = tgt_series.values
-    print(f"3. After target: {df.shape}, target={target_col}")
-
-    # 4. Split (example usage block at bottom only)
-    train_df, test_df, _ = time_split(df, test_size=0.2)
-    print(f"4. After split: train={train_df.shape}, test={test_df.shape}")
-
-    # 5. Scale
-    feature_cols = ["open", "high", "low", "close", "volume"]
-    train_scaled, test_scaled, val_scaled, scalers = scale_features(
-        train_df, test_df, feature_cols, val_df=None
-    )
-    print(f"5. After scale: train={train_scaled.shape}, test={test_scaled.shape}")
-
-    # 6. Window
-    target_train = train_df[target_col].to_numpy(dtype=float)
-    target_test = test_df[target_col].to_numpy(dtype=float)
-
-    X_train, y_train = window(train_scaled, target_train, lookback=10, horizon=1)
-    X_test, y_test = window(test_scaled, target_test, lookback=10, horizon=1)
-
-    print(f"6. After window:")
-    print(f"   Train: X{X_train.shape} → y{y_train.shape}")
-    print(f"   Test:  X{X_test.shape} → y{y_test.shape}")
-    print(f"   Features: {feature_cols}")
-    print("✓ Pipeline complete")

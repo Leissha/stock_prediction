@@ -1,0 +1,4 @@
+metric,value
+mae,2.5780983287104364
+rmse,3.3103554409739115
+directional_accuracy,0.8

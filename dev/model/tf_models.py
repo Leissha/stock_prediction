@@ -5,12 +5,14 @@ TensorFlow Model for LSTM, GRU, RNN, BiLSTM.
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.optimizers import Adam, RMSprop, SGD  # type: ignore
+from tensorflow.keras.callbacks import EarlyStopping  # type: ignore
 from loguru import logger
 from tensorflow.keras.models import Sequential  # type: ignore
 from tensorflow.keras.layers import LSTM, GRU, SimpleRNN, Dense, Dropout, Bidirectional  # type: ignore
 from typing import List, Optional
 import numpy as np
 from config.data import MODEL_NAME, LAYERS, DROPOUT
+from utils.plots import plot_training_metrics
 
 # Layer type mapping
 _LAYER = {
@@ -71,7 +73,7 @@ class TFModel:
         
         return model
 
-    def fit(self, x_train, y_train, epochs=25, batch_size=32, learning_rate=1e-3, optimizer: str = 'adam', validation_data=None):
+    def fit(self, x_train, y_train, epochs=25, batch_size=32, learning_rate=1e-3, optimizer: str = 'adam', validation_data=None, meta_path=None):
         """Train a TensorFlow model using built-in Keras features.
         validation_data: optional tuple (X_val, y_val) to monitor validation loss.
         """
@@ -89,13 +91,17 @@ class TFModel:
             'batch_size': batch_size,
             'verbose': 1,
         }
+        
         if validation_data is not None:
             fit_kwargs['validation_data'] = validation_data
-        history = self.model.fit(**fit_kwargs)
-        
-        # Store history for plotting
-        self.training_history = history
+        # Early stopping if validation is provided
+        callbacks = []
+        if validation_data is not None:
+            callbacks.append(EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True, mode='min'))
 
+        history = self.model.fit(**fit_kwargs, callbacks=callbacks)
+
+        plot_training_metrics(history, save_path=f"cache/trained_models/{meta_path}_training.png")
         return self
 
     def predict(self, x_test: np.ndarray) -> np.ndarray:

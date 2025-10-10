@@ -2,20 +2,21 @@
 ARIMA/SARIMA Model Implementation for Time Series Forecasting
 References:
 - how it works: https://youtu.be/drlt0pNEUH4?si=rsm6GqGsxmFVhXE5 
-- code guide: https://medium.com/@injure21/arima-for-anomaly-detection-85bfdef5d585
 - log, pacf plots explanation: https://www.statsmodels.org/stable/generated/statsmodels.tsa.arima.model.ARIMA.html
-- code guide: https://github.com/liannewriting/YouTube-videos-public/blob/main/arima-model-time-series-prediction-python/time-series-arima.ipynb 
-- https://www.statsmodels.org/stable/generated/statsmodels.tsa.statespace.sarimax.SARIMAX.html
-- https://blog.quantinsti.com/forecasting-stock-returns-using-arima-model/
-https://www.kaggle.com/code/nageshsingh/stock-market-forecasting-arima 
-https://www.machinelearningplus.com/time-series/arima-model-time-series-forecasting-python/ 
+- library: https://www.statsmodels.org/stable/generated/statsmodels.tsa.statespace.sarimax.SARIMAX.html
+- code guide: https://medium.com/@injure21/arima-for-anomaly-detection-85bfdef5d585
+-             https://github.com/liannewriting/YouTube-videos-public/blob/main/arima-model-time-series-prediction-python/time-series-arima.ipynb 
+-             https://blog.quantinsti.com/forecasting-stock-returns-using-arima-model/
+-             https://www.kaggle.com/code/nageshsingh/stock-market-forecasting-arima 
+-             https://www.machinelearningplus.com/time-series/arima-model-time-series-forecasting-python/ 
 
 ARIMAX/SARIMAX implementation compatible with our training pipeline.
 
 Notes:
-- Input sequences come as 3D tensors (n_samples, lag_days, n_features) already scaled.
-- We flatten each sequence window into exogenous regressors: shape (n_samples, lag_days * n_features).
-- The target is a single output variable (e.g., Close). For multistep training targets shaped (N, lookup_steps), we use the first horizon to fit the time-series model and generate k-step (lookup_steps) forecasts at predict time using exogenous inputs.
+- Uses unscaled target series from the DataBundle (endog only; no exogenous features to avoid leakage).
+- Input windows are 3D (N, lookback, features) but SARIMA only uses N to produce (N, K) forecasts.
+- Forecast horizon is aligned via `forecast_horizon=bundle.horizon` to match TF models.
+- Multi-step predictions are generated via rolling (walk-forward) forecasting with state updates.
 """
 
 import numpy as np
@@ -30,7 +31,7 @@ class SARIMAXModel:
     How it works? 
         Fit a state-space model and estimate parameters by maximizing likelihood; inference uses the Kalman filter/smoother.
     Endog: the target series (e.g: Close).
-    Exog: 2D array of multivariate features aligned in time (flattened lag_days × features window).
+    Exog: 2D array of multivariate features aligned in time (flattened lookback × features window) - not used in this implementation as OHCLV would leak information.
     Orders:
         order=(p,d,q): AR lags, differences, MA lags (non-seasonal).
         seasonal_order=(P,D,Q,m): seasonal AR lags, seasonal differences, seasonal MA lags, period m.
@@ -117,8 +118,7 @@ class SARIMAXModel:
         if self._results is None:
             raise RuntimeError("Model not fitted. Call fit() first.")
 
-        N = x_test.shape[0]
-        K = self.forecast_horizon
+        N, K = x_test.shape[0], self.forecast_horizon
 
         from statsmodels.tsa.statespace.sarimax import SARIMAXResults
         res = cast(SARIMAXResults, self._results)

@@ -56,7 +56,7 @@ def descale(arr: np.ndarray, scaler: Optional[StandardScaler]) -> np.ndarray:
     return np.asarray(result)
 
 
-def to_prices(
+def returns_to_prices(
     returns: np.ndarray,
     base_prices: np.ndarray,
     mode: str,
@@ -151,7 +151,7 @@ def prices_to_returns(
     prices: np.ndarray, base_prices: np.ndarray, mode: str = "return", use_log: bool = False
 ) -> np.ndarray:
     """
-    Convert prices to returns (inverse of to_prices).
+    Convert prices to returns (inverse of convert_returns_to_prices).
 
     Args:
         prices: Price predictions (N, K)
@@ -209,7 +209,7 @@ def validate_price_conversion(
         AssertionError: If roundtrip doesn't match
     """
     # Forward: returns → prices
-    prices = to_prices(returns, base_prices, mode, use_log, validate=False)
+    prices = returns_to_prices(returns, base_prices, mode, use_log, validate=False)
 
     # Backward: prices → returns
     returns_back = prices_to_returns(prices, base_prices, mode, use_log)
@@ -252,14 +252,14 @@ if __name__ == "__main__":
     # 3. Convert to prices
     base_prices = np.linspace(100, 110, N)  # Per-row base prices
 
-    y_pred_prices = to_prices(
+    y_pred_prices = returns_to_prices(
         y_pred_descaled, base_prices, mode="return", use_log=False
     )
-    y_true_prices = to_prices(
+    y_true_prices = returns_to_prices(
         y_true_descaled, base_prices, mode="return", use_log=False
     )
 
-    print(f"3. After to_prices:")
+    print(f"3. After returns_to_prices:")
     print(f"   Pred: {y_pred_prices[0]}")
     print(f"   True: {y_true_prices[0]}")
     print(f"   Base: {base_prices[0]}")
@@ -280,8 +280,8 @@ if __name__ == "__main__":
     test_return_log = np.array([[np.log(1.05)]])
     test_base_single = np.array([100.0])
 
-    price_simple = to_prices(test_return_simple, test_base_single, "return", False)
-    price_log = to_prices(test_return_log, test_base_single, "log_return", True)
+    price_simple = returns_to_prices(test_return_simple, test_base_single, "return", False)
+    price_log = returns_to_prices(test_return_log, test_base_single, "log_return", True)
 
     print(f"   Simple return 0.05 → price {price_simple[0,0]:.2f}")
     print(f"   Log return {np.log(1.05):.4f} → price {price_log[0,0]:.2f}")
