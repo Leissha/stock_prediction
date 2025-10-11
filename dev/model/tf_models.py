@@ -101,6 +101,10 @@ class TFModel:
 
         history = self.model.fit(**fit_kwargs, callbacks=callbacks)
 
+        # Store actual epochs trained (accounting for early stopping)
+        self.epochs_trained = len(history.history['loss'])
+        logger.info(f"Training completed: {self.epochs_trained}/{epochs} epochs")
+
         plot_training_metrics(history, save_path=f"cache/trained_models/{meta_path}_training.png")
         return self
 

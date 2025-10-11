@@ -100,7 +100,7 @@ if __name__ == "__main__":
 
     # Determine model tag
     if args.model_name == 'ensemble':
-        meta_model_tag = f"ensemble+sarima+{args.ensemble_2}"
+        meta_model_tag = f"ensemble+sarima-{args.sarima_weight}+{args.ensemble_2}-{args.model_2_weight}"
     else:
         meta_model_tag = f"{args.model_name}"
 
@@ -245,7 +245,16 @@ if __name__ == "__main__":
     # ========================================================================
     # Step 5: Compute metrics
     # ========================================================================
-    metrics = compute_metrics(y_true_px, y_hat_px)
+    # Extract epochs_trained if available (for TF models)
+    epochs_trained = getattr(model, 'epochs_trained', None)
+    if epochs_trained is None:
+        # For ensemble, try to get from the TF submodel
+        model_2 = getattr(model, 'model_2', None)
+        if model_2 is not None:
+            epochs_trained = getattr(model_2, 'epochs_trained', None)
+
+    metrics = compute_metrics(y_true_px, y_hat_px, epochs_trained=epochs_trained)
+
     # Plot prediction vs actual (first step in horizon)
     # Build real date axis from test_df index if available
     dates = None
@@ -263,13 +272,23 @@ if __name__ == "__main__":
     print(f"MAE: {metrics['mae']:.6f}")
     print(f"RMSE: {metrics['rmse']:.6f}")
     print(f"Directional Accuracy (DA@1): {metrics['directional_accuracy']:.3f}")
+    if 'epochs_trained' in metrics:
+        print(f"Epochs Trained: {metrics['epochs_trained']}/{args.epochs}")
     print(f"{'=' * 60}")
 
     # Save results
     import pandas as pd
+    metric_names = ['mae', 'rmse', 'directional_accuracy']
+    metric_values = [metrics['mae'], metrics['rmse'], metrics['directional_accuracy']]
+
+    # Add epochs_trained if present
+    if 'epochs_trained' in metrics:
+        metric_names.append('epochs_trained')
+        metric_values.append(metrics['epochs_trained'])
+
     results_df = pd.DataFrame({
-        'metric': ['mae', 'rmse', 'directional_accuracy'],
-        'value': [metrics['mae'], metrics['rmse'], metrics['directional_accuracy']]
+        'metric': metric_names,
+        'value': metric_values
     })
     report_path = f"results/{meta_path}.csv"
     results_df.to_csv(report_path, index=False)
