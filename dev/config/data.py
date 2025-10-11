@@ -9,12 +9,12 @@ END_DATE = end_date.strftime('%Y-%m-%d')
 
 # Price value can be "Close", "Open", "High", "Low", "AdjClose", "Volume"
 TARGET_FEATURE = "Close"  
-LAG_DAYS = 60
+LOOKBACK = 60
 
 # Data processing
-LOOKUP_STEP = 1
+HORIZON = 1
 TEST_SIZE = 0.2
-VALIDATION_SPLIT = 0.2
+VAL_SIZE = 0.2
 SHUFFLE = True
 SCALE = True
 SPLIT_METHOD = 'date'

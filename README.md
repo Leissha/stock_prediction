@@ -30,19 +30,16 @@ python main.py
 
 #### Target Feature Selection
 ```bash
-# Predict different features (Close, Open, High, Low, Volume)
-python main.py --company AAPL --target_feature Close --prediction_days 30
-python main.py --company TSLA --target_feature Open --prediction_days 60
+# Predict different target features (Close, Open, High, Low, Volume)
+python main.py --company AAPL --target_feature Close --lookback 60 --horizon 5 --model_name lstm --scale
+python main.py --company TSLA --target_feature Open  --lookback 90 --horizon 1 --model_name gru  --scale
 ```
 
 
-#### Different Split Methods
+#### Validation Split
 ```bash
-# Chronological split (default - recommended for time series)
-python main.py --split_method date --test_size 0.2
-
-# Random split (breaks temporal dependencies - use with caution)
-python main.py --split_method random --test_size 0.2 --shuffle
+# Enable validation split passed to Keras (EarlyStopping auto-enabled)
+python main.py --model_name lstm --lookback 60 --horizon 5 --scale --val_size 0.1
 ```
 
 #### Model Selection
@@ -52,6 +49,10 @@ python main.py --model_name lstm
 
 # Bidirectional LSTM for potentially better performance
 python main.py --model_name bilstm
+
+# GRU / Simple RNN
+python main.py --model_name gru
+python main.py --model_name rnn
 ```
 
 #### Return-based Prediction
@@ -65,31 +66,46 @@ python main.py --target_ret
 
 #### More Configuration
 ```bash
-# Complete example showcasing all 
+# Complete example
 python main.py \
     --company AAPL \
     --start_date 2022-01-01 \
     --end_date 2024-01-01 \
     --target_feature Close \
-    --prediction_days 60 \
-    --split_method date \
-    --test_size 0.2 \
+    --lookback 60 \
+    --horizon 5 \
     --scale \
-    --model_name lstm
+    --model_name lstm \
+    --layers 64 32 \
+    --dropout_rate 0.2 \
+    --epochs 50 \
+    --batch_size 32 \
+    --optimizer adam \
+    --learning_rate 0.001 \
+    --val_size 0.1 \
+    --inspect_plots
 ```
 
-**What it does:**
-- **Multi-feature input**: Uses all OHLCV features automatically
-- **Flexible target selection**: Predict any feature (Close, Open, High, Low, Volume)  
-- **Date range control**: Specify exact start/end dates for data
-- **Smart NaN handling**: Linear interpolation for missing stock data
-- **Multiple split methods**: Chronological, ratio, or random data splitting
-- **Advanced caching**: Raw data + processed data + scaler persistence
-- **Separate scalers**: Industry best practice for OHLCV features
-- **Data leakage prevention**: Scalers fit only on training data
-- Multiple model architectures (LSTM, Bidirectional LSTM)
-- Comprehensive trading-based evaluation metrics
-- Outputs: Model files, plots, accuracy CSV files
+**What it does (v2 pipeline):**
+- **Unified shapes**: `X (N,L,F)`, `y (N,K)`, `preds (N,K)`
+- **Single source of truth**: clean/target/split/scale/window in `dev/dataio/converters.py`, orchestrated by `dev/pipeline.py`
+- **Models**: `fit(...)`, `predict(X)->(N,K)` only; no internal scaling or metrics
+- **Validation split**: `--val_size` routes to Keras `validation_data` with EarlyStopping
+- **Postprocess & metrics**: `dev/dataio/postprocess.py`, `dev/eval/metrics.py`
+- **Caching**: raw data, models, results under `dev/cache` and `dev/results`
+
+#### SARIMA & Ensemble
+```bash
+# SARIMA (univariate target)
+python main.py --model_name sarimax --lookback 60 --horizon 5 --sarimax_seasonal --sarimax_m 5
+
+# Ensemble: SARIMA + GRU (weighted average)
+python main.py --model_name ensemble --ensemble_2 gru --lookback 60 --horizon 5 \
+  --layers 64 32 --dropout_rate 0.2 --epochs 50 --batch_size 32 \
+  --optimizer rmsprop --learning_rate 0.0005 \
+  --sarima_weight 0.5 --model_2_weight 0.5 \
+  --scale --val_size 0.1 --log_ret
+```
 
 ---
 
@@ -103,22 +119,29 @@ python main.py \
 | `--target_feature` | str | Close | Target feature to predict (Close, Open, High, Low, AdjClose, Volume) |
 | `--target_ret` | flag | False | Predict simple percentage returns instead of raw prices |
 | `--log_ret` | flag | False | Predict log returns instead of raw prices |
-| `--lag_days` | int | 60 | Number of days to look back for prediction |
-| `--lookup_steps` | int | 1 | **Number of future days to predict (1=single-step, >1=multistep)** |
-| `--test_size` | float | 0.2 | Test set size ratio |
-| `--split_method` | str | 'date' | Split method (date, random) |
-| `--shuffle` | flag | True | Shuffle data (for random split) |
+| `--lookback` | int | 60 | Number of days to look back for prediction |
+| `--horizon` | int | 1 | **Number of future days to predict (1=single-step, >1=multistep)** |
+| `--test_size` | float | 0.2 | Test set size ratio (chronological) |
 | `--scale` | flag | True | Scale features |
-| `--model_name` | str | lstm | Model type (lstm, gru, rnn, bilstm) |
+| `--model_name` | str | lstm | Model type (lstm, gru, rnn, bilstm, sarimax, ensemble) |
+| `--val_size` | float | 0.2 | Validation set size ratio |
+| `--sarimax_seasonal` | flag | False | Enable seasonal SARIMAX |
+| `--sarimax_m` | int | 5 | Seasonal period |
+| `--sarima_weight` | float | 0.2 | Ensemble SARIMA weight |
+| `--model_2_weight` | float | 0.8 | Ensemble TF-model weight |
+| `--ensemble_2` | str | lstm | TF submodel used by ensemble (lstm, gru, rnn, bilstm) |
 | `--layers` | list | [50, 50, 50] | Layer sizes (e.g., 64 32 16) |
 | `--dropout_rate` | float | 0.2 | Dropout rate for regularization |
 | `--epochs` | int | 50 | Number of training epochs |
 | `--batch_size` | int | 32 | Batch size for training |
+| `--optimizer` | str | adam | Optimizer (adam, rmsprop, sgd) |
+| `--learning_rate` | float | 0.001 | Learning rate for optimizer |
+| `--inspect_plots` | flag | False | Generate preprocessing plots (candlestick/boxplot) |
 
 ## Output Files
 
 - **Model**: `cache/trained_models/*.keras`
-- **Plots**: `results/{some_config}.png`
+- **Plots**: training curves `cache/trained_models/{meta}_training.png`, predictions `results/{meta}_predictions.png`
 - **Cache**: `cache/processed_data/*.pkl` and `cache/raw_data/*.pkl`
 - **Results**: `results/{some_config}.csv`
 
@@ -127,23 +150,20 @@ python main.py \
 stock-prediction-project/
 ├── dev/                    # Advanced development module
 │   ├── main.py             # CLI interface and orchestration
-│   ├── train.py            # Model training script
-│   ├── test.py             # Model evaluation and prediction
 │   ├── model/              # AI Model architectures
-│   │   └── tf_models.py    # TensorFlow models (LSTM, BiLSTM, GRU, RNN)
-│   ├── data_preprocessing/ # Data processing modules
-│   │   ├── data_loading.py # yfinance download + local cache
-│   │   ├── data_processor.py # Main data processing pipeline
-│   │   ├── data_splitting.py # Train/test split methods
-│   │   ├── handle_nans.py  # NaN detection and interpolation
-│   │   └── create_sequence.py # LSTM sliding window creation
-│   ├── utils/              # Utilities (file_handling, eval, plots)
-│   │   ├── file_handling.py # File I/O operations
-│   │   ├── evaluating_utils.py # Evaluation metrics
-│   │   └── plots.py        # Visualization functions
+│   │   ├── tf_models.py    # TensorFlow models (LSTM, BiLSTM, GRU, RNN)
+│   │   ├── sarimax.py      # SARIMAX univariate model
+│   │   └── ensemble.py     # Weighted SARIMA+LSTM ensemble
+│   ├── dataio/             # Pre/post-processing
+│   │   ├── loading.py      # yfinance download + cache
+│   │   ├── converters.py   # clean_data, build_target, time_split, scale_features, windows_*
+│   │   └── postprocess.py  # descale, returns_to_prices, align_predictions
+│   ├── eval/               # Evaluation
+│   │   └── metrics.py      # MAE, RMSE, DA
+│   ├── schemas/            # Data contract
+│   │   └── bundle.py       # DataBundle (Pydantic)
 │   ├── config/             # Configuration files
-│   │   ├── data.py         # Data configuration constants
-│   │   └── run_config.py   # Runtime configuration dataclass
+│   │   └── data.py         # Central defaults & date helpers
 │   ├── cache/              # Cache processed data & models
 │   │   ├── raw_data/       # Cached raw stock data
 │   │   ├── processed_data/ # Cached processed sequences
@@ -153,6 +173,19 @@ stock-prediction-project/
 ├── requirements.txt        # Package dependencies
 └── README.md               # This file
 ```
+
+## Architecture & Data Contracts
+
+- `DataBundle` enforces shapes and metadata:
+  - `X_train/X_val/X_test`: `(N, L, F)`, `y_*`: `(N, K)`
+  - `lookback=L`, `horizon=K`, `target_mode` in {price, return, log_return}
+  - Optional `train_df/test_df/val_df` for SARIMA, `base_prices_*` for price conversion
+- Preprocessing single source of truth in `dataio.converters`:
+  - `clean_data()`, `build_target()`, `time_split()`, `scale_features()`, `windows_train_test()`, `windows_train_val_test()`
+- Postprocessing in `dataio.postprocess`:
+  - `descale()`, `returns_to_prices()`, `align_predictions()`; `predictions_to_prices()` used in pipeline
+- Models implement only `fit()` and `predict()`; no internal scaling or metrics
+- Ensemble does weighted average after strict shape validation
 
 ## Requirements
 | Category | Package | Version | Purpose |
@@ -189,5 +222,5 @@ stock-prediction-project/
 
 ---
 
-**Last Updated**: September 5, 2025  
+**Last Updated**: 11 October, 2025  
 **Course**: COS30018 Option C

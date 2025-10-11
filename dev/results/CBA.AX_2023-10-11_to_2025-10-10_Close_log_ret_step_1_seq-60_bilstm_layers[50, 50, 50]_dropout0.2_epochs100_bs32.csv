@@ -1,0 +1,5 @@
+metric,value
+mae,2.7675706767374253
+rmse,3.438759225822942
+directional_accuracy,0.7474747474747475
+epochs_trained,32.0
