@@ -10,6 +10,7 @@ param(
   [string]$Company = "CBA.AX",
   [string]$StartDate = "2023-10-11",
   [string]$EndDate = "2025-10-10",
+  [string]$TargetFeature = "Close",
   [int[]]$Lookbacks = @(60),
   [int[]]$Horizons = @(1, 5),
   [string[]]$TfModels = @('lstm','gru','rnn','bilstm'),
