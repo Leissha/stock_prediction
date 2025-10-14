@@ -34,13 +34,7 @@
 - All model classes must implement: `predict(X_test, y_test=None) -> np.ndarray`
   - Returns shape: **(N, K)**
   - `y_test` is optional (for models that need it during prediction)
-- No debug prints in production model code (use logging if needed)
 - Store all training history/artifacts in model attributes for later access
-
-### Code Quality
-- Functions should have single responsibility
-- Unused parameters should be removed
-- Variable names should be descriptive (avoid single-letter except in standard math contexts)
 
 ---
 
@@ -53,7 +47,7 @@ graph TB
 
     subgraph DATAIO[dataio/ - Data I/O]
         LOAD[loading.py<br/>load_stock_data]
-        CONV[converters.py<br/>clean, target, split, scale, window, create_windows_with_alignment]
+        CONV[converters.py<br/>clean_data, build_target, time_split, scale_features, windows_train_test, windows_train_val_test]
         POST[postprocess.py<br/>descale, returns_to_prices]
     end
 
@@ -160,14 +154,17 @@ graph LR
 - **Output**: (target_series, target_column_name)
 - **Modes**:
   - `"price"`: return original prices
-  - `"return"`: compute pct_change()
+  - `"return"`: compute pct_change() or log returns if use_log=True
   - `"log_return"`: compute log(p_t / p_{t-1})
-- **Note**: Returns drop first row (NaN from diff)
+- **Note**: Returns drop first row (NaN from diff) for return modes
 
 #### `time_split(df, test_size=0.2, val_size=0.0) -> (train_df, test_df, val_df)`
-- **Purpose**: Chronological train/test split
-- **Input**: Time-indexed DataFrame
-- **Output**: (train, test, val) DataFrames
+- **Purpose**: Chronological train/val/test split
+- **Input**: 
+  - `df`: Time-indexed DataFrame
+  - `test_size`: Proportion for test set (0.0-1.0)
+  - `val_size`: Proportion for validation set (0.0-1.0)
+- **Output**: (train_df, test_df, val_df) - val_df is None if val_size=0
 - **Note**: NO shuffling - preserves temporal order
 
 #### `scale_features(train_df, test_df, feature_cols) -> (train_scaled, test_scaled, scalers)`
@@ -176,8 +173,8 @@ graph LR
 - **Output**: (train_scaled: (T,F), test_scaled: (Te,F), scalers: dict)
 - **Note**: Separate scaler per feature to prevent leakage
 
-#### `window(features_scaled, target_series, lookback, horizon=1) -> (X, y)`
-- **Purpose**: Create sliding windows for sequence prediction
+#### `windows_train_test(features_scaled, target_series, lookback, horizon=1) -> (X, y)`
+- **Purpose**: Create sliding windows for time series prediction (primitive function)
 - **Input**:
   - `features_scaled`: (M, F) array
   - `target_series`: (M,) array - single target column
@@ -187,7 +184,18 @@ graph LR
   - `X`: (N, L, F) - N sliding windows
   - `y`: (N, K) - future targets
 - **Formula**: N = M - L - K
-- **Note**: F is inferred from `features_scaled.shape[1]` - NO feature_cols param needed!
+- **Note**: F is inferred from `features_scaled.shape[1]`
+
+#### `windows_train_val_test(train_scaled, test_scaled, target_train, target_test, lookback, horizon, val_scaled=None, target_val=None) -> (X_train, y_train, X_test, y_test, X_val, y_val)`
+- **Purpose**: Orchestrate windowing for train/val/test splits with primitive alignment
+- **Input**:
+  - `train_scaled`, `test_scaled`: (M, F) arrays
+  - `target_train`, `target_test`: (M,) arrays
+  - `lookback`: L - sequence length
+  - `horizon`: K - forecast steps
+  - `val_scaled`, `target_val`: Optional validation arrays
+- **Output**: All windowed arrays with consistent alignment
+- **Note**: Single entrypoint for creating all data windows
 
 **Example:**
 ```python
@@ -195,7 +203,7 @@ graph LR
 features = np.random.rand(500, 5)  # 500 days, 5 features
 target = np.random.rand(500)        # 500 target values
 
-X, y = window(features, target, lookback=60, horizon=5)
+X, y = windows_train_test(features, target, lookback=60, horizon=5)
 # X.shape = (435, 60, 5)  where 435 = 500 - 60 - 5
 # y.shape = (435, 5)
 ```
@@ -212,7 +220,7 @@ X, y = window(features, target, lookback=60, horizon=5)
 - **Output**: (N, K) unscaled array
 - **Note**: Handles 1D → 2D conversion automatically
 
-#### `to_prices(returns, base_prices, mode, use_log=False, validate=True) -> ndarray`
+#### `returns_to_prices(returns, base_prices, mode, use_log=False, validate=True) -> ndarray`
 - **Purpose**: Convert returns → prices using compounding
 - **Input**:
   - `returns`: (N, K) return predictions
@@ -233,18 +241,34 @@ X, y = window(features, target, lookback=60, horizon=5)
 returns = np.array([[0.02, 0.01]])  # 2%, 1% returns
 base = np.array([100.0])             # base price = 100
 
-prices = to_prices(returns, base, mode="return")
+prices = returns_to_prices(returns, base, mode="return")
 # prices[0, 0] = 100 * (1 + 0.02) = 102.0
 # prices[0, 1] = 102 * (1 + 0.01) = 103.02
 ```
 
 #### `prices_to_returns(prices, base_prices, mode="return", use_log=False) -> ndarray`
-- **Purpose**: Inverse of to_prices() - convert prices → returns
+- **Purpose**: Inverse of returns_to_prices() - convert prices → returns
 - **Input**:
   - `prices`: (N, K) price predictions
   - `base_prices`: (N,) base prices
 - **Output**: (N, K) returns
 - **Note**: Computes sequential returns: r[k] = (price[k] - price[k-1]) / price[k-1]
+
+---
+
+### pipeline.py
+
+#### `predictions_to_prices(y_true, y_hat, bundle) -> (y_true_prices, y_hat_prices)`
+- **Purpose**: Convert predictions to price space for evaluation (pipeline-level function)
+- **Input**:
+  - `y_true`: (N, K) ground truth predictions
+  - `y_hat`: (N, K) model predictions  
+  - `bundle`: DataBundle with metadata and scalers
+- **Output**: (y_true_prices, y_hat_prices) both (N, K)
+- **Process**: 
+  1. Descale both arrays using `bundle.target_scaler`
+  2. Convert to prices using `returns_to_prices()` with `bundle.base_prices_test`
+- **Note**: Used in pipeline for final evaluation in price space
 
 ---
 
@@ -313,7 +337,7 @@ y_hat = model.predict(X_test)  # Returns (N, K)
 #### EnsembleModel
 ```python
 # Located in: dev/model/ensemble.py
-config = EnsembleConfig(sarima_weight=0.3, lstm_weight=0.7)
+config = EnsembleConfig(sarima_weight=0.3, model_2_weight=0.7)
 ensemble = EnsembleModel(config)
 ensemble.fit(sarima_model, lstm_model)  # Pre-trained models
 y_hat = ensemble.predict(X_test)  # Weighted average (N, K)
@@ -393,11 +417,11 @@ sequenceDiagram
     Note over PL,CV: Stage 3: Split & Scale
     PL->>CV: time_split(df, test_size=0.2)
     CV-->>PL: (train_df, test_df)
-    PL->>CV: scale_features(train, test, features)
-    CV-->>PL: (train_scaled, test_scaled, scalers)
+    PL->>CV: scale_features(train, test, features, val_df)
+    CV-->>PL: (train_scaled, test_scaled, val_scaled, scalers)
 
     Note over PL,CV: Stage 4: Create Windows (with alignment)
-    PL->>CV: create_windows_with_alignment(train_scaled, test_scaled, target_train, target_test, L, K, val_scaled)
+    PL->>CV: windows_train_val_test(train_scaled, test_scaled, target_train, target_test, L, K, val_scaled)
     CV-->>PL: X_train:(N,L,F), y_train:(N,K)
     CV-->>PL: X_test:(N,L,F), y_test:(N,K)
     opt if val_scaled provided
