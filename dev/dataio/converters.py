@@ -165,6 +165,40 @@ def scale_features(
     return train_scaled, test_scaled, val_scaled, scalers
 
 
+def scale_target(
+    target_train: np.ndarray,
+    target_test: np.ndarray,
+    target_val: Optional[np.ndarray] = None,
+    scaler: Optional[StandardScaler] = None
+) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray], StandardScaler]:
+    """
+    Scale target values using StandardScaler.
+    
+    Args:
+        target_train: Training target values (N,)
+        target_test: Test target values (N,)
+        target_val: Validation target values (N,) or None
+        scaler: Existing scaler or None to create new one
+        
+    Returns:
+        (scaled_train, scaled_test, scaled_val, scaler)
+    """
+    if scaler is None:
+        scaler = StandardScaler()
+        # Fit on training data only (single source of truth)
+        target_train_scaled = np.asarray(scaler.fit_transform(target_train.reshape(-1, 1))).ravel()
+    else:
+        target_train_scaled = np.asarray(scaler.transform(target_train.reshape(-1, 1))).ravel()
+    
+    # Transform test and validation using fitted scaler
+    target_test_scaled = np.asarray(scaler.transform(target_test.reshape(-1, 1))).ravel()
+    target_val_scaled = None
+    if target_val is not None:
+        target_val_scaled = np.asarray(scaler.transform(target_val.reshape(-1, 1))).ravel()
+    
+    return target_train_scaled, target_test_scaled, target_val_scaled, scaler
+
+
 def windows_train_test(
     features_scaled: np.ndarray,
     target_series: np.ndarray,

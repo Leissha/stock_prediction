@@ -152,13 +152,26 @@ def plot_training_metrics(history, save_path="results/training_metrics.png"):
         history: Keras training history object
         save_path: Path to save the plot
     """
+    # Validate history object
+    if history is None:
+        print("Warning: history is None, skipping training metrics plot")
+        return
+    
+    if not hasattr(history, 'history') or not history.history:
+        print("Warning: history.history is empty, skipping training metrics plot")
+        return
+    
+    if 'loss' not in history.history or not history.history['loss']:
+        print("Warning: No loss data in history, skipping training metrics plot")
+        return
+    
     plt.figure(figsize=(10, 6))
     
     epochs = range(1, len(history.history['loss']) + 1)
     
     # Plot multiple metrics (train + validation if available)
     plt.plot(epochs, history.history['loss'], color='blue', linewidth=2, label='Train Loss')
-    if 'val_loss' in history.history:
+    if 'val_loss' in history.history and history.history['val_loss']:
         plt.plot(epochs, history.history['val_loss'], color='red', linewidth=2, label='Val Loss')
     
     plt.title('Training Metrics Over Epochs')
@@ -171,3 +184,5 @@ def plot_training_metrics(history, save_path="results/training_metrics.png"):
     os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close()
+    
+    print(f"Training metrics plot saved to: {save_path}")

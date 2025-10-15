@@ -460,6 +460,270 @@ sequenceDiagram
 
 ---
 
+## Scaling Architecture
+
+### Overview
+The scaling system follows a **controlled, consistent approach** where the `--scale` flag determines whether both features AND targets are scaled together. This ensures no scale mismatches between inputs and outputs.
+
+### Scaling Logic Matrix
+
+| Mode | `--scale` Flag | Features Scaled? | Targets Scaled? | Result |
+|------|----------------|------------------|-----------------|---------|
+| **PRICE** | `--scale` |  Yes |  Yes |  **Consistent** |
+| **PRICE** | No flag |  No |  No |  **Consistent** |
+| **RETURN** | `--scale` |  Yes |  Yes |  **Consistent** |
+| **RETURN** | No flag |  No |  No |  **Consistent** |
+| **LOG_RETURN** | `--scale` |  Yes |  Yes |  **Consistent** |
+| **LOG_RETURN** | No flag |  No |  No |  **Consistent** |
+
+### Scaling Implementation
+
+#### 1. Feature Scaling (`scale_features`)
+```python
+# Located in: dataio/converters.py
+def scale_features(train_df, test_df, feature_cols, val_df=None):
+    """
+    Fit StandardScaler on training data, transform all splits.
+    
+    Process:
+    1. Create separate StandardScaler for each feature
+    2. Fit scalers ONLY on training data (prevents leakage)
+    3. Transform train/test/val using fitted scalers
+    4. Return scaled arrays and scaler dictionary
+    """
+    scalers = {}
+    for i, col in enumerate(feature_cols):
+        scaler = StandardScaler()
+        # Fit on train only
+        train_scaled[:, i] = scaler.fit_transform(train_df[[col]].values)
+        # Transform test/val with same scaler
+        test_scaled[:, i] = scaler.transform(test_df[[col]].values)
+        if val_df is not None:
+            val_scaled[:, i] = scaler.transform(val_df[[col]].values)
+        scalers[col] = scaler
+```
+
+#### 2. Target Scaling (`scale_target`)
+```python
+# Located in: dataio/converters.py
+def scale_target(target_train, target_test, target_val=None, scaler=None):
+    """
+    Scale target values using StandardScaler.
+    
+    Process:
+    1. Create/fit StandardScaler on training targets only
+    2. Transform all target splits using fitted scaler
+    3. Return scaled targets and scaler
+    """
+    if scaler is None:
+        scaler = StandardScaler()
+        # Fit on training data only
+        target_train_scaled = scaler.fit_transform(target_train.reshape(-1, 1)).ravel()
+    else:
+        target_train_scaled = scaler.transform(target_train.reshape(-1, 1)).ravel()
+    
+    # Transform test/val with same scaler
+    target_test_scaled = scaler.transform(target_test.reshape(-1, 1)).ravel()
+    if target_val is not None:
+        target_val_scaled = scaler.transform(target_val.reshape(-1, 1)).ravel()
+```
+
+#### 3. Pipeline Integration
+```python
+# Located in: pipeline.py
+def prepare_data(..., scale=True, ...):
+    # 1. Scale features (always when scale=True)
+    if scale:
+        train_scaled, test_scaled, val_scaled, scalers = scale_features(
+            train_df, test_df, features, val_df=val_df
+        )
+    else:
+        train_scaled = train_df[features].values
+        test_scaled = test_df[features].values
+        val_scaled = val_df[features].values if val_df is not None else None
+        scalers = {}
+
+    # 2. Scale targets (always when scale=True - ALL modes)
+    target_scaler = None
+    if scale:
+        target_train, target_test, target_val, target_scaler = scale_target(
+            target_train, target_test, target_val
+        )
+        scalers['__target__'] = target_scaler
+```
+
+### Descale Process
+
+#### 1. Descale Function
+```python
+# Located in: dataio/postprocess.py
+def descale(arr, scaler):
+    """
+    Inverse StandardScaler transformation.
+    
+    Process:
+    1. Check if scaler exists (None = no-op)
+    2. Ensure 2D input for StandardScaler
+    3. Apply inverse_transform
+    4. Restore original shape
+    """
+    if scaler is None:
+        return np.asarray(arr, dtype=float)
+    
+    # Ensure 2D for StandardScaler
+    if arr.ndim == 1:
+        arr = np.reshape(arr, (-1, 1))
+    
+    # Inverse transform
+    result = scaler.inverse_transform(arr)
+    return np.asarray(result)
+```
+
+#### 2. Pipeline Descale
+```python
+# Located in: pipeline.py
+def predictions_to_prices(y_true, y_hat, bundle):
+    """
+    Convert predictions to price space for evaluation.
+    
+    Process:
+    1. Descale both y_true and y_hat if target was scaled
+    2. Convert to prices based on target mode
+    """
+    # Descale targets if they were scaled (applies to all modes)
+    if getattr(bundle, 'target_scaler', None) is not None:
+        y_true = descale(y_true, bundle.target_scaler)
+        y_hat = descale(y_hat, bundle.target_scaler)
+
+    if bundle.target_mode == TargetMode.PRICE:
+        # Already in price space after descaling
+        return y_true, y_hat
+    else:
+        # Convert returns to prices
+        y_true_px = returns_to_prices(y_true, bundle.base_prices_test, ...)
+        y_hat_px = returns_to_prices(y_hat, bundle.base_prices_test, ...)
+        return y_true_px, y_hat_px
+```
+
+### Scaling Flow Diagram
+
+```mermaid
+graph TB
+    subgraph Input[Input Data]
+        RAW[Raw OHLCV Data]
+    end
+    
+    subgraph ScaleDecision{Scale Flag?}
+        SCALE[--scale]
+        NOSCALE[No --scale]
+    end
+    
+    subgraph ScaleProcess[Scaling Process]
+        FEATSCALE[scale_features<br/>StandardScaler per feature<br/>Fit on train only]
+        TARGETSCALE[scale_target<br/>StandardScaler for targets<br/>Fit on train only]
+    end
+    
+    subgraph Train[Training]
+        MODEL[Model Training<br/>scaled_features → scaled_targets]
+    end
+    
+    subgraph Predict[Prediction]
+        PRED[Model Prediction<br/>scaled_features → scaled_predictions]
+    end
+    
+    subgraph Descale[Descale Process]
+        DESCALEFEAT[Descale Features<br/>Not needed for prediction]
+        DESCALETARGET[Descale Targets<br/>bundle.target_scaler.inverse_transform]
+    end
+    
+    subgraph Output[Final Output]
+        PRICES[Price Space Predictions<br/>Ready for evaluation]
+    end
+    
+    RAW --> ScaleDecision
+    ScaleDecision -->|scale=True| FEATSCALE
+    ScaleDecision -->|scale=True| TARGETSCALE
+    ScaleDecision -->|scale=False| MODEL
+    
+    FEATSCALE --> MODEL
+    TARGETSCALE --> MODEL
+    MODEL --> PRED
+    PRED --> DESCALETARGET
+    DESCALETARGET --> PRICES
+    
+    style ScaleDecision fill:#fff2cc
+    style ScaleProcess fill:#e1f5ff
+    style Descale fill:#f0e1ff
+    style Output fill:#e1ffe1
+```
+
+### Key Principles
+
+#### 1. **Consistency**
+- When `--scale` is used: **Both** features AND targets are scaled
+- When `--scale` is NOT used: **Neither** features NOR targets are scaled
+- No exceptions or mode-specific logic
+
+#### 2. **No Data Leakage**
+- Scalers are fitted **ONLY** on training data
+- Test and validation data use the same fitted scalers
+- No future information leaks into past scaling
+
+#### 3. **Proper Descale**
+- All predictions are descaled back to original space
+- Descale happens **before** return-to-price conversion
+- Maintains numerical precision throughout
+
+#### 4. **Single Source of Truth**
+- All scaling logic centralized in `dataio/converters.py`
+- Pipeline orchestrates but doesn't implement scaling
+- Consistent interface across all modes
+
+### Example Scaling Values
+
+#### PRICE Mode with Scaling
+```python
+# Original prices
+train_prices = [100.0, 101.0, 102.0, 99.0, 103.0]
+
+# After StandardScaler
+scaled_prices = [-0.5, 0.0, 0.5, -1.0, 1.0]  # mean=0, std=1
+
+# Model learns: scaled_features → scaled_prices
+# Prediction: scaled_features → scaled_prediction
+
+# Descale back to original space
+descaled_prediction = 101.5  # Back to price units
+```
+
+#### RETURN Mode with Scaling
+```python
+# Original returns
+train_returns = [0.01, 0.02, -0.01, 0.03, -0.02]
+
+# After StandardScaler
+scaled_returns = [-0.2, 0.4, -0.6, 0.8, -1.0]  # mean=0, std=1
+
+# Model learns: scaled_features → scaled_returns
+# Prediction: scaled_features → scaled_prediction
+
+# Descale back to original space
+descaled_prediction = 0.015  # Back to return units (1.5%)
+
+# Convert to prices
+price_prediction = base_price * (1 + 0.015)  # Compound return
+```
+
+### Benefits of Controlled Scaling
+
+1. **Predictable Behavior**: Same scaling logic regardless of target mode
+2. **No Scale Mismatches**: Features and targets always in same scale space
+3. **Easy Debugging**: Clear scaling/descaling path
+4. **Consistent Results**: Reproducible across different configurations
+5. **Proper Evaluation**: All metrics computed in original price space
+
+---
+
 ## Performance Considerations
 
 ### Caching Strategy
