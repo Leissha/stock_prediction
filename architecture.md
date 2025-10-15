@@ -476,8 +476,6 @@ The scaling system follows a **controlled, consistent approach** where the `--sc
 | **LOG_RETURN** | `--scale` |  Yes |  Yes |  **Consistent** |
 | **LOG_RETURN** | No flag |  No |  No |  **Consistent** |
 
-### Scaling Implementation
-
 #### 1. Feature Scaling (`scale_features`)
 ```python
 # Located in: dataio/converters.py
@@ -552,59 +550,6 @@ def prepare_data(..., scale=True, ...):
         scalers['__target__'] = target_scaler
 ```
 
-### Descale Process
-
-#### 1. Descale Function
-```python
-# Located in: dataio/postprocess.py
-def descale(arr, scaler):
-    """
-    Inverse StandardScaler transformation.
-    
-    Process:
-    1. Check if scaler exists (None = no-op)
-    2. Ensure 2D input for StandardScaler
-    3. Apply inverse_transform
-    4. Restore original shape
-    """
-    if scaler is None:
-        return np.asarray(arr, dtype=float)
-    
-    # Ensure 2D for StandardScaler
-    if arr.ndim == 1:
-        arr = np.reshape(arr, (-1, 1))
-    
-    # Inverse transform
-    result = scaler.inverse_transform(arr)
-    return np.asarray(result)
-```
-
-#### 2. Pipeline Descale
-```python
-# Located in: pipeline.py
-def predictions_to_prices(y_true, y_hat, bundle):
-    """
-    Convert predictions to price space for evaluation.
-    
-    Process:
-    1. Descale both y_true and y_hat if target was scaled
-    2. Convert to prices based on target mode
-    """
-    # Descale targets if they were scaled (applies to all modes)
-    if getattr(bundle, 'target_scaler', None) is not None:
-        y_true = descale(y_true, bundle.target_scaler)
-        y_hat = descale(y_hat, bundle.target_scaler)
-
-    if bundle.target_mode == TargetMode.PRICE:
-        # Already in price space after descaling
-        return y_true, y_hat
-    else:
-        # Convert returns to prices
-        y_true_px = returns_to_prices(y_true, bundle.base_prices_test, ...)
-        y_hat_px = returns_to_prices(y_hat, bundle.base_prices_test, ...)
-        return y_true_px, y_hat_px
-```
-
 ### Scaling Flow Diagram
 
 ```mermaid
@@ -613,9 +558,9 @@ graph TB
         RAW[Raw OHLCV Data]
     end
     
-    subgraph ScaleDecision{Scale Flag?}
-        SCALE[--scale]
-        NOSCALE[No --scale]
+    subgraph ScaleDecision[Scale Decision]
+        SCALE[--scale flag]
+        NOSCALE[No --scale flag]
     end
     
     subgraph ScaleProcess[Scaling Process]
@@ -632,7 +577,6 @@ graph TB
     end
     
     subgraph Descale[Descale Process]
-        DESCALEFEAT[Descale Features<br/>Not needed for prediction]
         DESCALETARGET[Descale Targets<br/>bundle.target_scaler.inverse_transform]
     end
     
@@ -640,10 +584,11 @@ graph TB
         PRICES[Price Space Predictions<br/>Ready for evaluation]
     end
     
-    RAW --> ScaleDecision
-    ScaleDecision -->|scale=True| FEATSCALE
-    ScaleDecision -->|scale=True| TARGETSCALE
-    ScaleDecision -->|scale=False| MODEL
+    RAW --> SCALE
+    RAW --> NOSCALE
+    SCALE --> FEATSCALE
+    SCALE --> TARGETSCALE
+    NOSCALE --> MODEL
     
     FEATSCALE --> MODEL
     TARGETSCALE --> MODEL
@@ -714,13 +659,6 @@ descaled_prediction = 0.015  # Back to return units (1.5%)
 price_prediction = base_price * (1 + 0.015)  # Compound return
 ```
 
-### Benefits of Controlled Scaling
-
-1. **Predictable Behavior**: Same scaling logic regardless of target mode
-2. **No Scale Mismatches**: Features and targets always in same scale space
-3. **Easy Debugging**: Clear scaling/descaling path
-4. **Consistent Results**: Reproducible across different configurations
-5. **Proper Evaluation**: All metrics computed in original price space
 
 ---
 
