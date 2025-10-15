@@ -89,6 +89,15 @@ class DataBundle(BaseModel):
                     f"base_prices_test length {len(self.base_prices_test)} != N_test {self.X_test.shape[0]} "
                     f"(expected slice: df[col].iloc[lookback-1 : lookback-1+N_test])"
                 )
+        
+        # Validation base prices
+        if self.base_prices_val is not None:
+            if self.base_prices_val.ndim != 1:
+                raise ValueError(f"base_prices_val must be 1D, got shape {self.base_prices_val.shape}")
+            if self.X_val is not None and len(self.base_prices_val) != self.X_val.shape[0]:
+                raise ValueError(
+                    f"base_prices_val length {len(self.base_prices_val)} != N_val {self.X_val.shape[0]}"
+                )
 
         # ---- Enum/flag consistency ----
         if self.target_mode == TargetMode.LOG_RETURN and not self.use_log_returns:
@@ -106,6 +115,29 @@ class DataBundle(BaseModel):
                 raise ValueError(
                     f"target_feature '{self.target_feature}' not in train_df.columns: {list(self.train_df.columns)}"
                 )
+        
+        # ---- Scaler consistency validation ----
+        if self.scalers:
+            # Ensure all feature scalers are present
+            missing_scalers = set(self.features) - set(self.scalers.keys())
+            if missing_scalers:
+                raise ValueError(f"Missing scalers for features: {missing_scalers}")
+            
+            # Ensure target scaler is consistent with target_mode
+            if self.target_scaler is not None and "__target__" not in self.scalers:
+                raise ValueError("target_scaler provided but not in scalers dict")
+            if "__target__" in self.scalers and self.target_scaler is None:
+                raise ValueError("__target__ in scalers but target_scaler is None")
+        
+        # ---- Data consistency across splits (single source of truth) ----
+        # Ensure all splits have same feature count
+        if self.X_val is not None:
+            if self.X_val.shape[2] != self.X_train.shape[2]:
+                raise ValueError(f"Feature count mismatch: X_train {self.X_train.shape[2]} vs X_val {self.X_val.shape[2]}")
+            if self.X_val.shape[1] != self.lookback:
+                raise ValueError(f"Lookback mismatch (val): X_val.shape[1]={self.X_val.shape[1]} vs lookback={self.lookback}")
+            if self.y_val is not None and self.y_val.shape[1] != self.horizon:
+                raise ValueError(f"Horizon mismatch (val): y_val.shape[1]={self.y_val.shape[1]} vs horizon={self.horizon}")
 
         return self
 

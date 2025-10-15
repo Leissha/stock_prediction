@@ -5,6 +5,7 @@ from .converters import (
     build_target,
     time_split,
     scale_features,
+    scale_target,
     windows_train_test,
     windows_train_val_test,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "build_target",
     "time_split",
     "scale_features",
+    "scale_target",
     "windows_train_test",
     "windows_train_val_test",
     "descale",

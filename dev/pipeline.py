@@ -7,7 +7,7 @@ import numpy as np
 from typing import Tuple, Any
 from schemas.bundle import DataBundle, TargetMode
 from dataio.converters import (
-    clean_data, build_target, time_split, scale_features, windows_train_val_test,
+    clean_data, build_target, time_split, scale_features, scale_target, windows_train_val_test,
 )
 from dataio.postprocess import returns_to_prices, descale
 from dataio.loading import load_stock_data
@@ -78,6 +78,14 @@ def prepare_data(
     target_train = train_df[target_col_name].to_numpy(dtype=float)
     target_test = test_df[target_col_name].to_numpy(dtype=float)
     target_val = val_df[target_col_name].to_numpy(dtype=float) if val_df is not None else None
+
+    # Scale target if using scaling (consistent scaling for all modes)
+    target_scaler = None
+    if scale:
+        target_train, target_test, target_val, target_scaler = scale_target(
+            target_train, target_test, target_val
+        )
+        scalers['__target__'] = target_scaler
 
     # 6. Create windows with proper alignment (single source of truth)
     X_train, y_train, X_test, y_test, X_val, y_val = windows_train_val_test(
@@ -171,14 +179,14 @@ def predictions_to_prices(
     Returns:
         (y_true_px, y_hat_px): Both (N_test, K) in price space
     """
-    if bundle.target_mode == TargetMode.PRICE:
-        # Already in price space
-        return y_true, y_hat
-
-    # Optional: descale returns if a target scaler exists
+    # Descale targets if they were scaled
     if getattr(bundle, 'target_scaler', None) is not None:
         y_true = descale(y_true, bundle.target_scaler)
         y_hat = descale(y_hat, bundle.target_scaler)
+
+    if bundle.target_mode == TargetMode.PRICE:
+        # Already in price space after descaling
+        return y_true, y_hat
 
     # Convert returns to prices (only for return/log_return)
     mode_value = bundle.target_mode.value if hasattr(bundle.target_mode, 'value') else bundle.target_mode
