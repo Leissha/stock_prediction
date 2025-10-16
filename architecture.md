@@ -106,6 +106,13 @@ graph LR
         SPLIT[time_split<br/>train/test chronological]
     end
 
+    subgraph Stage2b[Stage 2.5: Sentiment]
+        NEWS[get_stock_news<br/>Google News RSS + cache]
+        FINBERT[FinBERT analyze<br/>ProsusAI/finbert]
+        AGG[aggregate daily<br/>s_mean/pos_ratio/…]
+        MERGE[merge into df<br/>pre-split]
+    end
+
     subgraph Stage3[Stage 3: Scale]
         SCALE[scale_features<br/>StandardScaler per-feature]
     end
@@ -127,6 +134,11 @@ graph LR
     RAW --> LOAD
     LOAD --> CLEAN
     CLEAN --> TARGET
+    TARGET --> NEWS
+    NEWS --> FINBERT
+    FINBERT --> AGG
+    AGG --> MERGE
+    MERGE --> SPLIT
     TARGET --> SPLIT
     SPLIT --> SCALE
     SCALE --> WINDOW
@@ -397,6 +409,7 @@ sequenceDiagram
     participant PL as pipeline.py
     participant LD as loading.load_stock_data
     participant CV as converters
+    participant SN as sentiment_pipeline
     participant SC as DataBundle
     participant M as Model
     participant PP as postprocess
@@ -413,6 +426,10 @@ sequenceDiagram
     PL->>CV: build_target(df, col, mode, use_log)
     CV-->>PL: (target_series, target_name)
     PL->>PL: align df to target.index
+
+    Note over PL,SN: Stage 2.5: Sentiment (optional)
+    PL->>SN: integrate_news_sentiment(df, ticker, start, end)
+    SN-->>PL: df_with_daily_sentiment
 
     Note over PL,CV: Stage 3: Split & Scale
     PL->>CV: time_split(df, test_size=0.2)

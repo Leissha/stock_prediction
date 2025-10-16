@@ -94,6 +94,32 @@ python main.py \
 - **Postprocess & metrics**: `dev/dataio/postprocess.py`, `dev/eval/metrics.py`
 - **Caching**: raw data, models, results under `dev/cache` and `dev/results`
 
+### Sentiment Integration
+
+Sentiment from Google News RSS is integrated before the split and used as extra features.
+
+Flags and behavior:
+
+```bash
+# Add FinBERT sentiment features (daily aggregation merged into stock df)
+python main.py --use_sentiment
+
+# Typical combined run (log returns + sentiment)
+python main.py --company AAPL --log_ret --use_sentiment
+```
+
+Details:
+- Source: Google News RSS (`company OR ticker` + date window)
+- Caching: append-only CSV per ticker under `dev/cache/sentiment/{TICKER}_news.csv`
+  - Only missing edge ranges are fetched; otherwise cached window is used
+  - Deduplication by `url`, then `(title,date)`; dates normalized to daily
+- Analyzer: FinBERT (`ProsusAI/finbert`) via `transformers/torch`
+- Daily features: `s_mean, s_median, s_std, pos_ratio, neg_ratio, entropy, news_count`
+- Missing days: time-aware interpolation then fill 0
+- Plot: unified train/val/test price vs smoothed sentiment saved to `results/{meta}_sentiment_vs_price_splits.png`
+
+Note on instruments: for Australian tickers, include exchange suffix (e.g., `CBA.AX`).
+
 #### SARIMA & Ensemble
 ```bash
 # SARIMA (univariate target)
@@ -141,7 +167,7 @@ python main.py --model_name ensemble --ensemble_2 gru --lookback 60 --horizon 5 
 ## Output Files
 
 - **Model**: `cache/trained_models/*.keras`
-- **Plots**: training curves `cache/trained_models/{meta}_training.png`, predictions `results/{meta}_predictions.png`
+- **Plots**: training curves `cache/trained_models/{meta}_training.png`, predictions `results/{meta}_predictions.png`, unified sentiment overlay `results/{meta}_sentiment_vs_price_splits.png`
 - **Cache**: `cache/processed_data/*.pkl` and `cache/raw_data/*.pkl`
 - **Results**: `results/{some_config}.csv`
 
@@ -205,6 +231,9 @@ stock-prediction-project/
 ### Common Issues
 1. **Import Errors**: Make sure virtual environment is activated
 2. **Data Download Issues**: Check internet connection and yfinance availability
+3. **Ticker Suffixes**: Some exchanges require suffixes (e.g., `CBA.AX`). Using `CBA` will fetch a different US-listed instrument with small price levels.
+4. **News Cache Messages**: "Fetching news..." logs indicate the pipeline step; verbose crawler logs will state whether cache was used or new articles were appended. Cache lives in `dev/cache/sentiment/`.
+5. **Returns vs Prices in Plots**: If a plot shows decimal “prices”, it means a return series was picked. We now guard against this; ensure your DataFrame carries the `close` price column (log returns are stored in `close_log_return`).
 3. **Memory Issues**: Reduce `prediction_days` or use smaller datasets
 4. **Model Training**: Ensure sufficient data for the specified lookback period
 
@@ -223,5 +252,5 @@ stock-prediction-project/
 
 ---
 
-**Last Updated**: 11 October, 2025  
+**Last Updated**: 16 October, 2025  
 **Course**: COS30018 Option C

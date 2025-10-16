@@ -186,3 +186,84 @@ def plot_training_metrics(history, save_path="results/training_metrics.png"):
     plt.close()
     
     print(f"Training metrics plot saved to: {save_path}")
+
+
+def plot_sentiment(bundle, save_path, sentiment_span: int = 15):
+    """
+    Single plot with train/val/test price and smoothed sentiment distinguished by color.
+    Requires merged sentiment columns (e.g., 's_mean') in bundle DataFrames.
+    """
+    parts = []
+    if hasattr(bundle, 'train_df') and bundle.train_df is not None and 's_mean' in bundle.train_df.columns:
+        df = bundle.train_df.copy()
+        df['__split__'] = 'train'
+        parts.append(df)
+    if hasattr(bundle, 'val_df') and bundle.val_df is not None and 's_mean' in bundle.val_df.columns:
+        df = bundle.val_df.copy()
+        df['__split__'] = 'val'
+        parts.append(df)
+    if hasattr(bundle, 'test_df') and bundle.test_df is not None and 's_mean' in bundle.test_df.columns:
+        df = bundle.test_df.copy()
+        df['__split__'] = 'test'
+        parts.append(df)
+    if not parts:
+        return
+
+    df_all = pd.concat(parts, axis=0)
+    try:
+        df_all.index = pd.to_datetime(df_all.index)
+    except Exception:
+        pass
+    df_all = df_all.sort_index()
+
+    # Smooth per split
+    df_all['__sent_smooth__'] = (
+        df_all.groupby('__split__')['s_mean']
+        .apply(lambda s: s.ewm(span=max(1, sentiment_span)).mean())
+        .reset_index(level=0, drop=True)
+    )
+
+    fig, ax1 = plt.subplots(figsize=(12, 5))
+    color_map = {'train': 'tab:green', 'val': 'tab:orange', 'test': 'tab:blue'}
+
+    # Price lines
+    for split, grp in df_all.groupby('__split__'):
+        x = grp.index.to_pydatetime().tolist() if isinstance(grp.index, pd.DatetimeIndex) else list(grp.index)
+        # Prefer explicit price columns; never fall back to an arbitrary first column
+        if 'close' in grp.columns:
+            y_series = grp['close']
+        elif 'adj close' in grp.columns:
+            y_series = grp['adj close']
+        elif 'adj_close' in grp.columns:
+            y_series = grp['adj_close']
+        else:
+            # If no recognized price column, skip this split to avoid plotting returns by mistake
+            continue
+        y = y_series.astype(float).tolist()
+        # Ensure split is a str for dict.get typing
+        split_key = str(split)
+        ax1.plot(x, y, color=color_map.get(split_key, 'gray'), linewidth=2, label=f'Price ({split_key})')
+
+    ax1.set_ylabel('Price')
+    ax1.grid(True, alpha=0.25)
+
+    # Sentiment dashed
+    ax2 = ax1.twinx()
+    for split, grp in df_all.groupby('__split__'):
+        x = grp.index.to_pydatetime().tolist() if isinstance(grp.index, pd.DatetimeIndex) else list(grp.index)
+        y = grp['__sent_smooth__'].astype(float).tolist()
+        split_key = str(split)
+        ax2.plot(x, y, color=color_map.get(split_key, 'gray'), linewidth=2, linestyle='--', label=f'Sent ({split_key})')
+
+    ax2.set_ylabel('Sentiment')
+    title_symbol = getattr(bundle, 'symbol', 'Symbol')
+    plt.title(f"{title_symbol} - Price vs Sentiment by Split (EWM)")
+
+    lines_1, labels_1 = ax1.get_legend_handles_labels()
+    lines_2, labels_2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper left')
+
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()

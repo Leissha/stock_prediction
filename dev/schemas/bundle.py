@@ -1,4 +1,5 @@
 from typing import List, Optional, Dict, Any
+import pandas as pd
 from enum import Enum
 import numpy as np
 from pydantic import BaseModel, Field, ConfigDict, model_validator
@@ -34,6 +35,9 @@ class DataBundle(BaseModel):
     scalers: Dict[str, Any] = Field(default_factory=dict)
     target_scaler: Optional[Any] = None
     base_prices_test: Optional[NDArray] = None
+
+    # Sentiment integration (optional)
+    use_sentiment: bool = False
 
     # Optional fields for SARIMAX (original DataFrames before sequencing)
     train_df: Optional[Any] = None  # pd.DataFrame

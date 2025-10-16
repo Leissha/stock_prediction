@@ -4,7 +4,9 @@ Functions: prepare, train, predict, to_price, score.
 Single source of truth for data contract and transforms.
 """
 import numpy as np
+import pandas as pd
 from typing import Tuple, Any
+from sentiment.sentiment_pipeline import integrate_news_sentiment
 from schemas.bundle import DataBundle, TargetMode
 from dataio.converters import (
     clean_data, build_target, time_split, scale_features, scale_target, windows_train_val_test,
@@ -26,6 +28,7 @@ def prepare_data(
     use_log_returns: bool = False,
     scale: bool = True,
     cache_dir: str = 'cache',
+    use_sentiment: bool = False,
 ) -> DataBundle:
     """
     Prepare data as validated Pydantic DataBundle.
@@ -59,15 +62,29 @@ def prepare_data(
     if target_col_name not in df.columns:
         df[target_col_name] = target_series.astype(float).values
 
+    # 3.5 (optional): Integrate sentiment features before split
+    if use_sentiment:
+        print("  Integrating sentiment features...")
+        df = integrate_news_sentiment(df, ticker, start_date, end_date)
+
+    print("\nFull DataFrame (tail 5):")        
+    print(df.tail(5))
+    
     # 4. Split
     train_df, test_df, val_df = time_split(df, test_size=test_size, val_size=val_size)
 
     # 5. Scale (single source of truth)
     features = ['close', 'high', 'low', 'open', 'volume']
+    # If sentiment columns exist, include them as additional features
+    sent_extra = [c for c in ['s_mean', 's_median', 's_trim10', 'pos_ratio', 'neg_ratio', 'entropy'] if c in df.columns]
+    if use_sentiment and sent_extra:
+        features = features + sent_extra
     if scale:
         train_scaled, test_scaled, val_scaled, scalers = scale_features(
             train_df, test_df, features, val_df=val_df
         )
+        print("\n[Preview] Train scaled features (head 3):")
+        print(pd.DataFrame(train_scaled[:3], columns=features))
     else:
         train_scaled = train_df[features].values
         test_scaled = test_df[features].values
@@ -118,6 +135,7 @@ def prepare_data(
         horizon=horizon,
         target_mode=target_mode,
         use_log_returns=use_log_returns,
+        use_sentiment=use_sentiment,
         X_train=X_train,
         y_train=y_train,
         X_test=X_test,
@@ -132,16 +150,10 @@ def prepare_data(
         train_df=train_df.copy(),
         test_df=test_df.copy(),
         val_df=val_df.copy() if val_df is not None else None,
-        target_feature=target_col_name,
+        target_feature=target_col_name
     )
 
-    print(f"  DataBundle prepared:")
-    print(f"   X_train: {bundle.X_train.shape}, y_train: {bundle.y_train.shape}")
-    if bundle.X_val is not None and bundle.y_val is not None:
-        print(f"   X_val:   {bundle.X_val.shape}, y_val: {bundle.y_val.shape}")
-    print(f"   X_test:  {bundle.X_test.shape}, y_test: {bundle.y_test.shape}")
-    print(f"   Mode: {bundle.target_mode.value}, use_log={bundle.use_log_returns}")
-
+    print(bundle.summary())
     return bundle
 
 

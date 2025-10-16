@@ -4,11 +4,12 @@ Keeps all argparse logic from old main.py.
 """
 import os
 import numpy as np
+import pandas as pd
 from argparse import ArgumentParser
 from config.data import *
 from pipeline import prepare_data, predict, predictions_to_prices
 from eval.metrics import compute_metrics
-from utils.plots import plot_predictions, create_candlestick_chart, create_boxplot, plot_training_metrics
+from utils.plots import plot_predictions, create_candlestick_chart, create_boxplot, plot_sentiment
 
 
 def parse_args():
@@ -41,6 +42,8 @@ def parse_args():
                         help="Validation size ratio (default: %(default)s)")
     parser.add_argument("--scale", action="store_true", default=SCALE,
                         help="Scale the data")
+    parser.add_argument("--use_sentiment", action="store_true", default=False,
+                        help="Include daily sentiment features if available")
 
     # Model arguments
     parser.add_argument("--model_name", type=str, default='lstm', 
@@ -101,6 +104,8 @@ if __name__ == "__main__":
     # Determine model tag
     if args.model_name == 'ensemble':
         meta_model_tag = f"ensemble+sarima-{args.sarima_weight}+{args.ensemble_2}-{args.model_2_weight}"
+    elif args.use_sentiment:
+        meta_model_tag = f"sentiment+{args.model_name}"
     else:
         meta_model_tag = f"{args.model_name}"
 
@@ -127,6 +132,7 @@ if __name__ == "__main__":
         use_log_returns=args.log_ret,
         scale=args.scale,
         cache_dir='cache',
+        use_sentiment=args.use_sentiment,
     )
 
     print(f"\n{'=' * 60}")
@@ -256,15 +262,31 @@ if __name__ == "__main__":
     metrics = compute_metrics(y_true_px, y_hat_px, epochs_trained=epochs_trained)
 
     # Plot prediction vs actual (first step in horizon)
-    # Build real date axis from test_df index if available
     dates = None
     if hasattr(bundle, 'test_df') and bundle.test_df is not None:
         try:
-            dates = bundle.test_df.index[:len(y_true_px)]
+            dates = bundle.test_df.index[-len(y_true_px):]
         except Exception:
             dates = None
-    # pass meta and dates positionally to match signature (actual, predicted, ticker, meta=None, dates=None)
+
+    # Print aligned prediction table (head/tail) for inspection
+    try:
+        pred_table = pd.DataFrame({
+            'date': pd.Index(dates) if dates is not None else pd.RangeIndex(len(y_true_px)),
+            'y_true_px': y_true_px[:, 0],
+            'y_hat_px': y_hat_px[:, 0],
+        })
+        print("\nPredictions (head 5):\n", pred_table.head(5))
+        print("\nPredictions (tail 5):\n", pred_table.tail(5))
+    except Exception as _e:
+        print(f"[warn] Could not print prediction table: {_e}")
+
+    # pass meta and dates; plotting now aligns lengths internally
     plot_predictions(y_true_px[:, 0], y_hat_px[:, 0], args.company, f"results/{meta_path}_predictions.png", dates)
+
+    # Combined train/val/test sentiment vs price in one plot
+    if args.use_sentiment:
+        plot_sentiment(bundle, f"results/{meta_path}_sentiment_vs_price_splits.png")
 
     print(f"\n{'=' * 60}")
     print(f"EVALUATION RESULTS - {args.model_name.upper()}")
