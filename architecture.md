@@ -61,7 +61,15 @@ graph TB
         ENS[ensemble.py<br/>Weighted Average]
     end
 
+    subgraph SENTIMENT[sentiment/ - Sentiment Analysis]
+        CRAWL[crawl_news.py<br/>Google News RSS]
+        ANALYZER[sentiment_analyzer.py<br/>FinBERT]
+        CACHE[sentiment_cache.py<br/>SentimentCache]
+    end
+
     subgraph EVAL[eval/ - Evaluation]
+        REGRESSION[regression_evaluator.py<br/>RegressionEvaluator]
+        CLASSIFICATION[classification_evaluator.py<br/>ClassificationEvaluator]
         METRICS[metrics.py<br/>MAE, RMSE, DA]
     end
 
@@ -109,7 +117,7 @@ graph LR
     subgraph Stage2b[Stage 2.5: Sentiment]
         NEWS[get_stock_news<br/>Google News RSS + cache]
         FINBERT[FinBERT analyze<br/>ProsusAI/finbert]
-        AGG[aggregate daily<br/>s_mean/pos_ratio/…]
+        AGG[aggregate daily<br/>sentiment_mean/news_count]
         MERGE[merge into df<br/>pre-split]
     end
 
@@ -284,6 +292,81 @@ prices = returns_to_prices(returns, base, mode="return")
 
 ---
 
+### eval/regression_evaluator.py
+
+#### `RegressionEvaluator`
+- **Purpose**: Centralized regression model evaluation
+- **Input**: DataBundle, model predictions, configuration
+- **Output**: Metrics, plots, CSV results
+- **Features**:
+  - Price space conversion
+  - Comprehensive metrics (MAE, RMSE, DA)
+  - Prediction plots
+  - Sentiment visualization (if enabled)
+
+#### `run_regression_evaluation(args, bundle, model, meta_path)`
+- **Purpose**: Single entry point for regression evaluation
+- **Process**: 
+  1. Generate predictions
+  2. Convert to price space
+  3. Calculate metrics
+  4. Create plots
+  5. Save results
+
+---
+
+### eval/classification_evaluator.py
+
+#### `ClassificationEvaluator`
+- **Purpose**: Binary classification evaluation with ablation study
+- **Input**: Ticker, date range, sentiment flag, configuration
+- **Output**: Classification metrics, confusion matrices, ablation results
+- **Features**:
+  - Multiple models (LSTM, Logistic Regression, Random Forest, SVM)
+  - Baseline comparison (with/without sentiment)
+  - Comprehensive metrics (accuracy, precision, recall, F1)
+  - Visualization plots
+
+#### `run_classification_evaluation(ticker, start_date, end_date, use_sentiment, scale, test_size, val_size)`
+- **Purpose**: Single entry point for classification evaluation
+- **Process**:
+  1. Prepare data using main pipeline
+  2. Train multiple classification models
+  3. Run ablation study
+  4. Generate plots and save results
+
+---
+
+### sentiment/sentiment_cache.py
+
+#### `SentimentCache`
+- **Purpose**: Simplified sentiment analysis and caching
+- **Features**:
+  - News fetching with Google RSS
+  - FinBERT sentiment analysis
+  - Intelligent caching (append-only)
+  - Daily sentiment aggregation
+  - Integration with stock data
+
+#### `get_news_with_sentiment(ticker, start_date, end_date) -> DataFrame`
+- **Purpose**: Get news with sentiment analysis
+- **Process**:
+  1. Check existing cache
+  2. Fetch missing articles
+  3. Analyze sentiment for new articles
+  4. Cache results
+- **Output**: DataFrame with news and sentiment scores
+
+#### `integrate_sentiment(df, ticker, start_date, end_date) -> DataFrame`
+- **Purpose**: Integrate sentiment features into stock data
+- **Process**:
+  1. Get daily sentiment aggregation
+  2. Merge with stock data
+  3. Forward-fill missing values
+- **Output**: DataFrame with sentiment features added
+
+---
+
 ### dataio/loading.py
 
 #### `load_stock_data(company, start_date, end_date, cache_dir='cache/raw_data') -> DataFrame`
@@ -409,7 +492,7 @@ sequenceDiagram
     participant PL as pipeline.py
     participant LD as loading.load_stock_data
     participant CV as converters
-    participant SN as sentiment_pipeline
+    participant SN as sentiment_cache
     participant SC as DataBundle
     participant M as Model
     participant PP as postprocess
@@ -428,7 +511,7 @@ sequenceDiagram
     PL->>PL: align df to target.index
 
     Note over PL,SN: Stage 2.5: Sentiment (optional)
-    PL->>SN: integrate_news_sentiment(df, ticker, start, end)
+    PL->>SN: integrate_sentiment(df, ticker, start, end)
     SN-->>PL: df_with_daily_sentiment
 
     Note over PL,CV: Stage 3: Split & Scale

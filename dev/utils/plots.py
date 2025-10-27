@@ -191,18 +191,18 @@ def plot_training_metrics(history, save_path="results/training_metrics.png"):
 def plot_sentiment(bundle, save_path, sentiment_span: int = 15):
     """
     Single plot with train/val/test price and smoothed sentiment distinguished by color.
-    Requires merged sentiment columns (e.g., 's_mean') in bundle DataFrames.
+    Requires merged sentiment columns (e.g., 'sentiment_mean') in bundle DataFrames.
     """
     parts = []
-    if hasattr(bundle, 'train_df') and bundle.train_df is not None and 's_mean' in bundle.train_df.columns:
+    if hasattr(bundle, 'train_df') and bundle.train_df is not None and 'sentiment_mean' in bundle.train_df.columns:
         df = bundle.train_df.copy()
         df['__split__'] = 'train'
         parts.append(df)
-    if hasattr(bundle, 'val_df') and bundle.val_df is not None and 's_mean' in bundle.val_df.columns:
+    if hasattr(bundle, 'val_df') and bundle.val_df is not None and 'sentiment_mean' in bundle.val_df.columns:
         df = bundle.val_df.copy()
         df['__split__'] = 'val'
         parts.append(df)
-    if hasattr(bundle, 'test_df') and bundle.test_df is not None and 's_mean' in bundle.test_df.columns:
+    if hasattr(bundle, 'test_df') and bundle.test_df is not None and 'sentiment_mean' in bundle.test_df.columns:
         df = bundle.test_df.copy()
         df['__split__'] = 'test'
         parts.append(df)
@@ -218,7 +218,7 @@ def plot_sentiment(bundle, save_path, sentiment_span: int = 15):
 
     # Smooth per split
     df_all['__sent_smooth__'] = (
-        df_all.groupby('__split__')['s_mean']
+        df_all.groupby('__split__')['sentiment_mean']
         .apply(lambda s: s.ewm(span=max(1, sentiment_span)).mean())
         .reset_index(level=0, drop=True)
     )

@@ -6,7 +6,7 @@ Single source of truth for data contract and transforms.
 import numpy as np
 import pandas as pd
 from typing import Tuple, Any
-from sentiment.sentiment_pipeline import integrate_news_sentiment
+from sentiment.sentiment_cache import get_sentiment_cache
 from schemas.bundle import DataBundle, TargetMode
 from dataio.converters import (
     clean_data, build_target, time_split, scale_features, scale_target, windows_train_val_test,
@@ -65,7 +65,8 @@ def prepare_data(
     # 3.5 (optional): Integrate sentiment features before split
     if use_sentiment:
         print("  Integrating sentiment features...")
-        df = integrate_news_sentiment(df, ticker, start_date, end_date)
+        sentiment_cache = get_sentiment_cache()
+        df = sentiment_cache.integrate_sentiment(df, ticker, start_date, end_date)
 
     print("\nFull DataFrame (tail 5):")        
     print(df.tail(5))
@@ -76,7 +77,7 @@ def prepare_data(
     # 5. Scale (single source of truth)
     features = ['close', 'high', 'low', 'open', 'volume']
     # If sentiment columns exist, include them as additional features
-    sent_extra = [c for c in ['s_mean', 's_median', 's_trim10', 'pos_ratio', 'neg_ratio', 'entropy'] if c in df.columns]
+    sent_extra = [c for c in ['sentiment_mean', 'news_count'] if c in df.columns]
     if use_sentiment and sent_extra:
         features = features + sent_extra
     if scale:

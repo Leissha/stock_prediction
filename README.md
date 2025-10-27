@@ -1,7 +1,8 @@
 # Stock Prediction Project - COS30018 Option C
 
 ## Project Overview
-This project demonstrates a stock prediction system and comparing multiple AI Models approaches for stock forecasting
+This project demonstrates a comprehensive stock prediction system with sentiment analysis, multiple AI models, and classification capabilities for academic research.
+
 ## Quick Start
 
 ### 1. Environment Setup
@@ -15,10 +16,26 @@ source venv/bin/activate  # Linux/Mac
 pip install -r requirements.txt
 ```
 
+### 2. Navigate to Development Directory
+```bash
+cd dev
+```
+
+### 3. Run Basic Examples
+```bash
+# Basic LSTM prediction
+python main.py --company AAPL --use_sentiment
+
+# Classification with sentiment analysis
+python main.py --classification --use_sentiment --company AAPL
+
+# Ensemble model
+python main.py --model_name ensemble --ensemble_2 rnn --use_sentiment
+```
+
 ## Usage Examples
 
 ---
-
 
 #### Basic Usage (Default Settings)
 ```bash
@@ -94,6 +111,15 @@ python main.py \
 - **Postprocess & metrics**: `dev/dataio/postprocess.py`, `dev/eval/metrics.py`
 - **Caching**: raw data, models, results under `dev/cache` and `dev/results`
 
+#### Classification Mode
+```bash
+# Binary classification (up/down prediction)
+python main.py --classification --use_sentiment --company AAPL
+
+# Classification with different models
+python main.py --classification --use_sentiment --company TSLA --scale
+```
+
 ### Sentiment Integration
 
 Sentiment from Google News RSS is integrated before the split and used as extra features.
@@ -114,7 +140,7 @@ Details:
   - Only missing edge ranges are fetched; otherwise cached window is used
   - Deduplication by `url`, then `(title,date)`; dates normalized to daily
 - Analyzer: FinBERT (`ProsusAI/finbert`) via `transformers/torch`
-- Daily features: `s_mean, s_median, s_std, pos_ratio, neg_ratio, entropy, news_count`
+- Daily features: `sentiment_mean`, `news_count`
 - Missing days: time-aware interpolation then fill 0
 - Plot: unified train/val/test price vs smoothed sentiment saved to `results/{meta}_sentiment_vs_price_splits.png`
 
@@ -174,8 +200,9 @@ python main.py --model_name ensemble --ensemble_2 gru --lookback 60 --horizon 5 
 ## Project Structure
 ```
 stock-prediction-project/
-├── dev/                    # Advanced development module
+├── dev/                    # Main development module
 │   ├── main.py             # CLI interface and orchestration
+│   ├── pipeline.py         # Core data processing pipeline
 │   ├── model/              # AI Model architectures
 │   │   ├── tf_models.py    # TensorFlow models (LSTM, BiLSTM, GRU, RNN)
 │   │   ├── sarimax.py      # SARIMAX univariate model
@@ -185,33 +212,59 @@ stock-prediction-project/
 │   │   ├── converters.py   # clean_data, build_target, time_split, scale_features, windows_*
 │   │   └── postprocess.py  # descale, returns_to_prices, align_predictions
 │   ├── eval/               # Evaluation
+│   │   ├── regression_evaluator.py  # RegressionEvaluator class
+│   │   ├── classification_evaluator.py  # ClassificationEvaluator class
 │   │   └── metrics.py      # MAE, RMSE, DA
+│   ├── sentiment/          # Sentiment Analysis
+│   │   ├── crawl_news.py   # Google News RSS fetching
+│   │   ├── sentiment_analyzer.py  # FinBERT sentiment analysis
+│   │   └── sentiment_cache.py  # SentimentCache class
 │   ├── schemas/            # Data contract
 │   │   └── bundle.py       # DataBundle (Pydantic)
 │   ├── config/             # Configuration files
-│   │   └── data.py         # Central defaults & date helpers
+│   │   ├── data.py         # Central defaults & date helpers
+│   │   └── pipeline_config.py  # Pipeline configuration management
+│   ├── utils/              # Utilities
+│   │   ├── plots.py        # Plotting utilities
+│   │   └── file_handling.py  # File operations
 │   ├── cache/              # Cache processed data & models
 │   │   ├── raw_data/       # Cached raw stock data
 │   │   ├── processed_data/ # Cached processed sequences
 │   │   ├── scalers/        # Cached feature scalers
+│   │   ├── sentiment/      # Cached news and sentiment data
 │   │   └── trained_models/ # Saved model files
-│   └── results/            # Output files (CSV & plots)
-├── requirements.txt        # Package dependencies
+│   ├── results/            # Output files (CSV & plots)
+│   ├── streamlit/          # Optional web dashboard
+│   ├── backend/            # Optional API backend
+│   └── requirements.txt    # Package dependencies
+├── requirements.txt        # Root package dependencies
 └── README.md               # This file
 ```
 
 ## Architecture & Data Contracts
 
-- `DataBundle` enforces shapes and metadata:
+### Core Components
+- **`DataBundle`**: Pydantic model enforcing shapes and metadata:
   - `X_train/X_val/X_test`: `(N, L, F)`, `y_*`: `(N, K)`
   - `lookback=L`, `horizon=K`, `target_mode` in {price, return, log_return}
   - Optional `train_df/test_df/val_df` for SARIMA, `base_prices_*` for price conversion
-- Preprocessing single source of truth in `dataio.converters`:
+
+### Data Processing Pipeline
+- **Preprocessing**: Single source of truth in `dataio.converters`:
   - `clean_data()`, `build_target()`, `time_split()`, `scale_features()`, `windows_train_test()`, `windows_train_val_test()`
-- Postprocessing in `dataio.postprocess`:
+- **Postprocessing**: In `dataio.postprocess`:
   - `descale()`, `returns_to_prices()`, `align_predictions()`; `predictions_to_prices()` used in pipeline
-- Models implement only `fit()` and `predict()`; no internal scaling or metrics
-- Ensemble does weighted average after strict shape validation
+
+### Model Architecture
+- **Models**: Implement only `fit()` and `predict()`; no internal scaling or metrics
+- **Ensemble**: Weighted average after strict shape validation
+- **Evaluation**: Centralized evaluators for regression and classification
+
+### Sentiment Integration
+- **`SentimentCache`**: Simplified sentiment analysis and caching
+- **Features**: `sentiment_mean`, `news_count` (daily aggregation)
+- **Caching**: Intelligent append-only CSV caching per ticker
+- **Integration**: Pre-split sentiment feature merging
 
 ## Requirements
 | Category | Package | Version | Purpose |
@@ -221,10 +274,17 @@ stock-prediction-project/
 | | scikit-learn | ≥1.7.1 | Machine learning utilities |
 | | numpy | ≥2.1.3 | Numerical computing |
 | | pandas | ≥2.3.1 | Data manipulation |
+| **Sentiment** | transformers | ≥4.40.0 | FinBERT sentiment analysis |
+| | torch | ≥2.0.0 | PyTorch backend |
 | **Visualization** | matplotlib | ≥3.10.5 | Plotting library |
+| | seaborn | ≥0.13.0 | Statistical plotting |
 | **Data Fetching** | yfinance | ≥0.2.65 | Yahoo Finance data |
-| **Utilities** | requests | ≥2.32.4 | HTTP library |
-| | loguru | ≥0.7.0 | Logging |
+| | requests | ≥2.32.4 | HTTP library |
+| **Utilities** | loguru | ≥0.7.0 | Logging |
+| | pydantic | ≥2.0.0 | Data validation |
+| **Optional** | streamlit | ≥1.28.0 | Web dashboard |
+| | fastapi | ≥0.100.0 | API backend |
+| | uvicorn | ≥0.23.0 | ASGI server |
 
 ## Troubleshooting
 
@@ -249,6 +309,16 @@ stock-prediction-project/
 - ✅ **Task 4 Complete**: Feature engineering, trading metrics, comprehensive evaluation
 - ✅ **Task 5 Complete**: Multivariate & multistep prediction implementation
 - ✅ **Task 6 Complete**: Ensemble model implementation
+- ✅ **Task 7 Complete**: Sentiment analysis integration with FinBERT
+
+### Current Features
+- **5 Execution Modes**: Sentiment, TF Models, SARIMAX, Classification, Ensemble
+- **Sentiment Analysis**: FinBERT integration with intelligent caching
+- **Multiple Models**: LSTM, GRU, RNN, BiLSTM, SARIMAX, Ensemble
+- **Classification**: Binary up/down prediction with baseline comparison
+- **Comprehensive Evaluation**: Regression and classification evaluators
+- **Visualization**: Prediction plots, sentiment overlays, confusion matrices
+- **Caching**: Efficient data and model caching system
 
 ---
 

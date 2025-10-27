@@ -93,7 +93,7 @@ def _read_cache(ticker: str) -> pd.DataFrame:
         # If legacy cache had no header, re-read with names
         if 'date' not in df.columns or 'title' not in df.columns:
             df = pd.read_csv(path, header=None,
-                             names=['date','title','url','source','company','ticker'])
+                        names=['date','title','url','source','company','ticker'])
     except Exception:
         return empty
     # Normalize types
@@ -144,8 +144,17 @@ def get_stock_news(ticker: str, start_date: datetime, end_date: datetime, verbos
             fetched_parts.append(_fetch_news_range(ticker, fetch_start, fetch_end))
 
     if fetched_parts:
-        new_df = pd.concat([part for part in fetched_parts if not part.empty] + ([cache_df] if not cache_df.empty else []),
-                           axis=0, ignore_index=True)
+        # Filter out empty DataFrames and prepare list for concatenation
+        non_empty_parts = [part for part in fetched_parts if not part.empty]
+        if cache_df is not None and not cache_df.empty:
+            non_empty_parts.append(cache_df)
+        
+        # Only concatenate if we have non-empty DataFrames
+        if non_empty_parts:
+            new_df = pd.concat(non_empty_parts, axis=0, ignore_index=True)
+        else:
+            new_df = pd.DataFrame(columns=['date','title','url','source','company','ticker'])
+        
         if not new_df.empty:
             # Deduplicate by URL then by (title,date)
             if 'url' in new_df.columns:
