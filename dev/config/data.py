@@ -28,3 +28,6 @@ DROPOUT = 0.2
 OPTIMIZER = "adam"
 BATCH_SIZE = 32
 EPOCHS = 50
+
+# Available model names
+TF_MODELS = ['lstm', 'gru', 'rnn', 'bilstm', 'cnn_lstm', 'cnn_gru', 'cnn_rnn', 'cnn_bilstm', 'attention_lstm', 'attention_gru', 'attention_rnn', 'attention_bilstm']

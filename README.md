@@ -314,13 +314,152 @@ stock-prediction-project/
 ### Current Features
 - **5 Execution Modes**: Sentiment, TF Models, SARIMAX, Classification, Ensemble
 - **Sentiment Analysis**: FinBERT integration with intelligent caching
-- **Multiple Models**: LSTM, GRU, RNN, BiLSTM, SARIMAX, Ensemble
-- **Classification**: Binary up/down prediction with baseline comparison
-- **Comprehensive Evaluation**: Regression and classification evaluators
-- **Visualization**: Prediction plots, sentiment overlays, confusion matrices
-- **Caching**: Efficient data and model caching system
+- **13 Model Variants**:
+  - Base RNN: LSTM, GRU, RNN, BiLSTM
+  - CNN Hybrid: CNN-LSTM, CNN-GRU, CNN-RNN, CNN-BiLSTM
+  - Attention: Attention-LSTM, Attention-GRU, Attention-RNN, Attention-BiLSTM
+  - Statistical: SARIMAX
+  - Ensemble: SARIMAX + any TF model
+- **Classification**: Binary up/down prediction with ablation study (with/without sentiment)
+- **Multiple ML Models**: Logistic Regression, Random Forest, SVM for classification
+- **Comprehensive Evaluation**: Regression and classification evaluators with ablation studies
+- **Visualization**: Prediction plots, sentiment overlays, confusion matrices, training curves
+- **Caching**: Multi-level caching (raw data, processed data, scalers, models, sentiment)
+
+## Complete Model Catalog
+
+### 1. Deep Learning Models (via TFModel)
+All TensorFlow models support:
+- Multi-step forecasting (`--horizon N`)
+- Binary classification (`--classification`)
+- Configurable architecture (`--layers 64 32 16`)
+- Dropout regularization (`--dropout_rate 0.2`)
+- Multiple optimizers (`--optimizer adam|rmsprop|sgd`)
+- Early stopping with validation split (`--val_size 0.1`)
+
+#### Base RNN Models
+| Model | Command | Best For | Training Speed |
+|-------|---------|----------|----------------|
+| LSTM | `--model_name lstm` | General purpose, long-term dependencies | Medium |
+| BiLSTM | `--model_name bilstm` | Full sequence context, bidirectional patterns | Slow |
+| GRU | `--model_name gru` | Faster alternative to LSTM | Fast |
+| RNN | `--model_name rnn` | Simple patterns, baseline | Very Fast |
+
+#### CNN Hybrid Models
+Combine Conv1D layers for spatial feature extraction with RNN for temporal modeling.
+
+| Model | Command | Best For |
+|-------|---------|----------|
+| CNN-LSTM | `--model_name cnn_lstm` | Local patterns + long-term memory |
+| CNN-GRU | `--model_name cnn_gru` | Local patterns + faster training |
+| CNN-RNN | `--model_name cnn_rnn` | Local patterns + simple baseline |
+| CNN-BiLSTM | `--model_name cnn_bilstm` | Local patterns + bidirectional context |
+
+#### Attention Models
+Use multi-head self-attention to focus on important time steps (e.g., earnings announcements).
+
+| Model | Command | Best For |
+|-------|---------|----------|
+| Attention-LSTM | `--model_name attention_lstm` | Focus on key events + long memory |
+| Attention-GRU | `--model_name attention_gru` | Focus on key events + faster |
+| Attention-RNN | `--model_name attention_rnn` | Focus on key events + simple |
+| Attention-BiLSTM | `--model_name attention_bilstm` | Focus on key events + bidirectional |
+
+**Attention Configuration:**
+- `--attn_heads 4`: Number of attention heads (default: 4)
+- `--attn_key_dim 16`: Key dimension per head (default: 16)
+
+### 2. Statistical Models
+
+#### SARIMAX
+Traditional time series model with seasonal components.
+
+```bash
+# Basic SARIMAX
+python main.py --model_name sarimax --lookback 60 --horizon 5
+
+# With seasonal components
+python main.py --model_name sarimax --sarimax_seasonal --sarimax_m 5
+```
+
+**Parameters:**
+- `--sarimax_seasonal`: Enable seasonal components
+- `--sarimax_m 5`: Seasonal period (e.g., 5 for weekly patterns)
+
+### 3. Ensemble Models
+
+Weighted combination of SARIMAX (statistical) and any TF model (neural).
+
+```bash
+# SARIMAX + GRU ensemble (equal weights)
+python main.py --model_name ensemble --ensemble_2 gru \
+  --sarima_weight 0.5 --model_2_weight 0.5
+
+# SARIMAX + BiLSTM ensemble (favor neural)
+python main.py --model_name ensemble --ensemble_2 bilstm \
+  --sarima_weight 0.3 --model_2_weight 0.7
+```
+
+**Parameters:**
+- `--ensemble_2 <lstm|gru|rnn|bilstm>`: Choose TF model for ensemble
+- `--sarima_weight 0.5`: Weight for SARIMAX predictions
+- `--model_2_weight 0.5`: Weight for TF model predictions
+
+### 4. Classification Models
+
+Binary up/down prediction with multiple models and ablation study.
+
+```bash
+# LSTM classification with sentiment analysis
+python main.py --classification --use_sentiment --model_name lstm
+
+# Compare multiple classifiers
+python main.py --classification --use_sentiment
+```
+
+**Models Trained:**
+1. Time Series: LSTM (or specified model)
+2. Logistic Regression (with class balancing)
+3. Random Forest (with class balancing)
+4. SVM (with class balancing)
+
+**Automatic Ablation Study:**
+- Trains baseline model without sentiment
+- Compares performance with/without sentiment features
+- Generates impact analysis plots
+
+**Classification Approaches:**
+- Default: Direct binary classification with BCE loss + optimal threshold tuning
+- Alternative: `--use_price_comparison` trains regression, converts to binary via price comparison
+
+## Model Selection Guide
+
+### For Best Accuracy (regardless of compute)
+1. **BiLSTM** or **Attention-BiLSTM** with sentiment
+2. **CNN-BiLSTM** if local patterns matter
+3. **Ensemble** (SARIMAX + BiLSTM) for robustness
+
+### For Fastest Training
+1. **GRU** - fastest neural model
+2. **RNN** - simplest baseline
+3. **SARIMAX** - no neural training needed
+
+### For Interpretability
+1. **SARIMAX** - traditional statistical model with interpretable coefficients
+2. **Attention models** - visualize which time steps matter most
+
+### For Resource-Constrained Environments
+1. **GRU** or **RNN**
+2. Use smaller `--layers 32 16` architecture
+3. Reduce `--epochs 25` for faster training
+
+### For Research/Experimentation
+1. **Attention models** - investigate what the model learns
+2. **Ensemble** - compare statistical vs neural approaches
+3. **Classification with ablation** - measure sentiment impact quantitatively
 
 ---
 
-**Last Updated**: 16 October, 2025  
+**Last Updated**: November 2, 2025
 **Course**: COS30018 Option C
+**Total Models**: 13 variants (4 base RNN + 4 CNN hybrid + 4 attention + 1 statistical + ensemble)

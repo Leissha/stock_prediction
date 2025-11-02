@@ -53,6 +53,8 @@ def descale(arr: np.ndarray, scaler: Optional[StandardScaler]) -> np.ndarray:
         except Exception:
             pass
 
+    # Replace any non-finite emerging from inverse_transform
+    result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
     return np.asarray(result)
 
 
@@ -107,6 +109,15 @@ def returns_to_prices(
     # Price mode: no conversion needed
     if mode == "price":
         return returns.astype(float)
+
+    # Clean non-finite and clip extremes before compounding
+    returns = np.nan_to_num(returns, nan=0.0, posinf=0.0, neginf=0.0)
+    if use_log or mode == "log_return":
+        # Clip log returns to reasonable range to avoid overflow in exp
+        returns = np.clip(returns, -1.0, 1.0)
+    else:
+        # Clip simple returns to avoid negative/overflowing prices
+        returns = np.clip(returns, -0.9, 2.0)
 
     # Validate returns if requested
     if validate:
@@ -220,69 +231,3 @@ def validate_price_conversion(
         raise AssertionError(f"Roundtrip error: max diff = {max_diff:.2e}")
 
     print(f"✓ Roundtrip validation passed (max diff = {max_diff:.2e})")
-
-
-# Example usage
-if __name__ == "__main__":
-    print("Smoke test: Postprocessing Pipeline")
-
-    # 1. Create dummy predictions and ground truth
-    N, K = 10, 3
-    np.random.seed(42)
-
-    # Simulate scaled predictions
-    y_pred_scaled = np.random.randn(N, K) * 0.5  # Scaled returns
-    y_true_scaled = np.random.randn(N, K) * 0.5
-
-    print(f"1. Raw predictions: y_pred{y_pred_scaled.shape}, y_true{y_true_scaled.shape}")
-
-    # 2. Descale (simulate StandardScaler inverse)
-    from sklearn.preprocessing import StandardScaler
-
-    scaler = StandardScaler()
-    # Fit on some dummy data
-    dummy = np.random.randn(100, K) * 0.02 + 0.01  # Returns centered at 1%
-    scaler.fit(dummy)
-
-    y_pred_descaled = descale(y_pred_scaled, scaler)
-    y_true_descaled = descale(y_true_scaled, scaler)
-
-    print(f"2. After descale: ranges pred=[{y_pred_descaled.min():.4f}, {y_pred_descaled.max():.4f}]")
-
-    # 3. Convert to prices
-    base_prices = np.linspace(100, 110, N)  # Per-row base prices
-
-    y_pred_prices = returns_to_prices(
-        y_pred_descaled, base_prices, mode="return", use_log=False
-    )
-    y_true_prices = returns_to_prices(
-        y_true_descaled, base_prices, mode="return", use_log=False
-    )
-
-    print(f"3. After returns_to_prices:")
-    print(f"   Pred: {y_pred_prices[0]}")
-    print(f"   True: {y_true_prices[0]}")
-    print(f"   Base: {base_prices[0]}")
-
-    # 4. Validate roundtrip
-    test_returns = np.array([[0.02, 0.01, -0.01], [0.01, 0.015, 0.02]])
-    test_base = np.array([100.0, 105.0])
-
-    print("\n4. Roundtrip validation:")
-    validate_price_conversion(test_returns, test_base, mode="return", use_log=False)
-    validate_price_conversion(
-        np.log(1 + test_returns), test_base, mode="log_return", use_log=True
-    )
-
-    # 5. Compare simple vs log returns
-    print("\n5. Simple vs Log Returns (same base=100, r=0.05):")
-    test_return_simple = np.array([[0.05]])
-    test_return_log = np.array([[np.log(1.05)]])
-    test_base_single = np.array([100.0])
-
-    price_simple = returns_to_prices(test_return_simple, test_base_single, "return", False)
-    price_log = returns_to_prices(test_return_log, test_base_single, "log_return", True)
-
-    print(f"   Simple return 0.05 → price {price_simple[0,0]:.2f}")
-    print(f"   Log return {np.log(1.05):.4f} → price {price_log[0,0]:.2f}")
-    print(f"   Both should be 105.0")

@@ -775,22 +775,188 @@ cache/
 
 ---
 
+## Available Models Summary
+
+### Deep Learning Models (TensorFlow/Keras)
+1. **LSTM** (Long Short-Term Memory)
+   - Best for: Capturing long-term dependencies in sequential data
+   - Architecture: Stacked LSTM layers with dropout regularization
+   - Use case: General-purpose time series prediction
+
+2. **BiLSTM** (Bidirectional LSTM)
+   - Best for: Learning patterns from both past and future context
+   - Architecture: Bidirectional LSTM layers
+   - Use case: When full sequence context improves predictions
+
+3. **GRU** (Gated Recurrent Unit)
+   - Best for: Faster training with similar performance to LSTM
+   - Architecture: Stacked GRU layers with dropout
+   - Use case: Resource-constrained environments
+
+4. **RNN** (Simple Recurrent Neural Network)
+   - Best for: Baseline comparison and simple patterns
+   - Architecture: Stacked SimpleRNN layers
+   - Use case: Quick prototyping and baseline models
+
+5. **CNN-LSTM Hybrid Models**
+   - Variants: `cnn_lstm`, `cnn_gru`, `cnn_rnn`, `cnn_bilstm`
+   - Best for: Extracting spatial features before temporal modeling
+   - Architecture: Conv1D layers → RNN layers → Dense layers
+   - Use case: When local patterns in features are important
+
+6. **Attention-based Models**
+   - Variants: `attention_lstm`, `attention_gru`, `attention_rnn`, `attention_bilstm`
+   - Best for: Focusing on most relevant time steps
+   - Architecture: RNN encoder → Multi-head self-attention → Dense layers
+   - Use case: When certain time steps (e.g., earnings) are more important
+
+### Statistical Models
+7. **SARIMAX** (Seasonal AutoRegressive Integrated Moving Average with eXogenous variables)
+   - Best for: Univariate time series with seasonal patterns
+   - Architecture: ARIMA with seasonal components
+   - Use case: Traditional statistical baseline, interpretable forecasts
+
+### Ensemble Models
+8. **SARIMAX + Deep Learning Ensemble**
+   - Best for: Combining statistical and neural approaches
+   - Architecture: Weighted average of SARIMAX and any TF model
+   - Configuration: `--model_name ensemble --ensemble_2 <lstm|gru|rnn|bilstm>`
+   - Use case: Leveraging strengths of both paradigms
+
+### Classification Models
+9. **Binary Classification Models**
+   - Time Series: LSTM, GRU, RNN, BiLSTM with BCE loss
+   - Traditional ML: Logistic Regression, Random Forest, SVM
+   - Task: Predict up/down movement (binary classification)
+   - Approach: Two methods available:
+     - BCE-based: Direct binary classification with optimal threshold tuning
+     - Price comparison: Regression prediction converted to binary via price comparison
+
+## Extension C.7: Sentiment Analysis Integration
+
+### Overview
+The sentiment analysis extension integrates financial news sentiment as additional features to improve stock price predictions. This addresses the limitation that traditional time series models only use historical price data, ignoring market sentiment and news events.
+
+### Architecture
+
+#### Components
+1. **News Crawling** ([sentiment/crawl_news.py](dev/sentiment/crawl_news.py))
+   - Google News RSS feed integration
+   - Yahoo Finance news API
+   - Business Today India news
+   - Reddit financial subreddits (optional with `--include_social`)
+   - Google Trends data (optional with `--include_social`)
+   - Date-filtered article fetching
+   - Deduplication by URL and (title, date)
+
+2. **Sentiment Analysis** ([sentiment/sentiment_analyzer.py](dev/sentiment/sentiment_analyzer.py))
+   - Model: FinBERT (ProsusAI/finbert) - domain-specific BERT for financial text
+   - Output: Sentiment scores [-1 to +1] and labels [positive/negative/neutral]
+   - Batch processing for efficiency
+   - GPU acceleration support
+
+3. **Sentiment Cache** ([sentiment/sentiment_cache.py](dev/sentiment/sentiment_cache.py))
+   - Intelligent append-only caching per ticker
+   - Cache path: `cache/sentiment/{TICKER}_news.csv`
+   - Only fetches missing date ranges
+   - Automatic cache validation and coverage checks
+
+#### Data Flow Integration
+```
+Raw News Articles
+    ↓
+FinBERT Analysis (ProsusAI/finbert)
+    ↓
+Daily Sentiment Aggregation (7 features)
+    ├─ sentiment_mean: Daily average sentiment
+    ├─ news_count: Number of articles per day
+    ├─ sentiment_roll3: 3-day rolling average
+    ├─ sentiment_roll7: 7-day rolling average
+    ├─ sentiment_lag1: Previous day sentiment
+    ├─ sentiment_momentum3: 3-day trend direction
+    └─ (sentiment features merged BEFORE train/test split)
+    ↓
+Merge with Stock Data (time-aware)
+    ↓
+Train/Test Split (prevents data leakage)
+    ↓
+Model Training with Sentiment Features
+```
+
+#### Temporal Alignment Strategy
+- News grouped by calendar date (date_only)
+- Left join with stock data (preserves all trading days)
+- Forward-fill sentiment for days without news (no backward fill to prevent leakage)
+- Remaining NaNs filled with 0 (neutral sentiment)
+
+### Implementation Details
+
+#### Feature Engineering
+7 temporal sentiment features designed to capture:
+1. **Baseline**: Daily mean sentiment, news volume
+2. **Short-term trend**: 3-day rolling average
+3. **Medium-term trend**: 7-day rolling average
+4. **Lag**: Previous day sentiment (temporal dependency)
+5. **Momentum**: 3-day cumulative change (trend direction)
+
+#### Usage
+```bash
+# Enable sentiment features
+python main.py --use_sentiment --company AAPL
+
+# Include social media data
+python main.py --use_sentiment --include_social --company AAPL
+
+# Classification with sentiment ablation study
+python main.py --classification --use_sentiment --company AAPL
+```
+
+#### Results and Impact
+- **Classification Evaluator**: Automatic ablation study comparing models with/without sentiment
+- **Metrics**: Accuracy, Precision, Recall, F1-Score comparison
+- **Visualization**:
+  - Sentiment vs price overlay plots
+  - Sentiment impact analysis charts
+  - Confusion matrices with/without sentiment
+
+### Technical Advantages
+1. **Domain-Specific**: FinBERT trained on financial text (10K reports, earnings calls)
+2. **Efficient Caching**: Only fetches missing data, append-only strategy
+3. **No Data Leakage**: Sentiment merged before split, forward-fill only
+4. **Rich Features**: 7 engineered features capture temporal patterns
+5. **Flexibility**: Works with all model types (LSTM, GRU, RNN, SARIMAX, Ensemble)
+6. **Evaluation**: Built-in ablation study for classification tasks
+
+### Performance Considerations
+- **Cache Size**: ~1MB per 1000 articles
+- **FinBERT Inference**: ~50ms per article on CPU, ~5ms on GPU
+- **Social Media**: Reddit adds ~500-1000 posts/ticker, increases fetch time by ~30s
+
 ## References
 
 ### Key Files
-- [pipeline.py](../pipeline.py) - Main orchestration
-- [dataio/converters.py](../dataio/converters.py) - Preprocessing
-- [dataio/postprocess.py](../dataio/postprocess.py) - Postprocessing
-- [schemas/bundle.py](../schemas/bundle.py) - Data contract
-- [model/tf_models.py](../model/tf_models.py) - TensorFlow models
-- [model/sarimax.py](../model/sarimax.py) - SARIMAX model
-- [model/ensemble.py](../model/ensemble.py) - Ensemble model
+- [main.py](dev/main.py) - CLI interface and orchestration
+- [pipeline.py](dev/pipeline.py) - Main data pipeline
+- [dataio/converters.py](dev/dataio/converters.py) - Preprocessing
+- [dataio/postprocess.py](dev/dataio/postprocess.py) - Postprocessing
+- [schemas/bundle.py](dev/schemas/bundle.py) - Data contract
+- [model/tf_models.py](dev/model/tf_models.py) - TensorFlow models (9 variants)
+- [model/sarimax.py](dev/model/sarimax.py) - SARIMAX model
+- [model/ensemble.py](dev/model/ensemble.py) - Ensemble model
+- [eval/regression_evaluator.py](dev/eval/regression_evaluator.py) - Regression evaluation
+- [eval/classification_evaluator.py](dev/eval/classification_evaluator.py) - Classification evaluation
+- [sentiment/sentiment_cache.py](dev/sentiment/sentiment_cache.py) - Sentiment management
+- [sentiment/sentiment_analyzer.py](dev/sentiment/sentiment_analyzer.py) - FinBERT integration
+- [sentiment/crawl_news.py](dev/sentiment/crawl_news.py) - News fetching
 
 ### External Dependencies
 - **yfinance**: Yahoo Finance data download
 - **pandas**: DataFrame operations
 - **numpy**: Array operations
-- **scikit-learn**: StandardScaler, metrics
+- **scikit-learn**: StandardScaler, metrics, classification models
 - **tensorflow/keras**: Deep learning models
 - **statsmodels**: SARIMAX implementation
 - **pydantic**: Data validation
+- **transformers**: FinBERT model (ProsusAI/finbert)
+- **torch**: PyTorch backend for FinBERT
+- **requests**: HTTP requests for news fetching

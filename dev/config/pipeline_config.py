@@ -25,6 +25,7 @@ class DataConfig:
     val_size: float = 0.0
     scale: bool = True
     use_sentiment: bool = False
+    include_social: bool = False  # Include social media data in sentiment
     target_as_return: bool = False
     use_log_returns: bool = False
 
@@ -34,14 +35,21 @@ class TFModelConfig:
     model_name: str = "lstm"
     layers: Optional[List[int]] = None
     dropout_rate: float = 0.2
-    epochs: int = 25
+    epochs: int = 100  # Default to 100, let patience handle early stopping
     batch_size: int = 32
     optimizer: str = "adam"
     learning_rate: float = 1e-3
-    
+    patience: int = 20  # ReduceLROnPlateau patience
+
+    # CNN-specific parameters (for CNN hybrid models)
+    cnn_filters: Optional[List[int]] = None
+    cnn_kernel_size: int = 3
+
     def __post_init__(self):
         if self.layers is None:
             self.layers = [50, 50, 50]
+        if self.cnn_filters is None:
+            self.cnn_filters = [64, 32]  # Default: 2 CNN layers
 
 @dataclass
 class SARIMAXConfig:
@@ -61,6 +69,7 @@ class ClassificationConfig:
     """Classification model configuration"""
     enabled: bool = False
     models: Optional[List[str]] = None
+    use_price_comparison: bool = False  # If True, compare predicted price with previous price instead of threshold
     
     def __post_init__(self):
         if self.models is None:
@@ -142,6 +151,14 @@ class ConfigManager:
         self.config.tf_model.batch_size = args.batch_size
         self.config.tf_model.optimizer = args.optimizer
         self.config.tf_model.learning_rate = args.learning_rate
+        if hasattr(args, 'patience'):
+            self.config.tf_model.patience = args.patience
+
+        # CNN-specific configuration (if provided)
+        if hasattr(args, 'cnn_filters') and args.cnn_filters is not None:
+            self.config.tf_model.cnn_filters = args.cnn_filters
+        if hasattr(args, 'cnn_kernel_size'):
+            self.config.tf_model.cnn_kernel_size = args.cnn_kernel_size
         
         # SARIMAX configuration
         self.config.sarimax.seasonal = args.sarimax_seasonal
@@ -154,9 +171,13 @@ class ConfigManager:
         
         # Classification configuration
         self.config.classification.enabled = args.classification
+        if hasattr(args, 'use_price_comparison'):
+            self.config.classification.use_price_comparison = args.use_price_comparison
         
         # Sentiment configuration
         self.config.sentiment.enabled = args.use_sentiment
+        if hasattr(args, 'include_social'):
+            self.config.data.include_social = args.include_social
         
         # Determine execution mode
         self._determine_mode()

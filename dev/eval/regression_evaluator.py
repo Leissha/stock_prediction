@@ -35,6 +35,9 @@ class RegressionEvaluator:
         print(f"\nConverting to price space...")
         y_true_px, y_hat_px = predictions_to_prices(y_true, y_hat, self.bundle)
         
+        print("y_hat stats:", np.mean(y_hat), np.std(y_hat), "min/max:", np.min(y_hat), np.max(y_hat))
+        print("y_true stats:", np.mean(y_true), np.std(y_true), "min/max:", np.min(y_true), np.max(y_true))
+        
         print(f"Price space - y_true: [{y_true_px.min():.2f}, {y_true_px.max():.2f}]")
         print(f"Price space - y_hat: [{y_hat_px.min():.2f}, {y_hat_px.max():.2f}]")
         
