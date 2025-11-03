@@ -1,16 +1,44 @@
 """
-Minimal ML pipeline wrapper.
+ML pipeline wrapper.
 Functions: prepare, train, predict, to_price, score.
-Single source of truth for data contract and transforms.
+Orchestrates data contract and transforms.
 """
 import numpy as np
+import pandas as pd
 from typing import Tuple, Any
+from sentiment.sentiment_cache import get_sentiment_cache
 from schemas.bundle import DataBundle, TargetMode
 from dataio.converters import (
     clean_data, build_target, time_split, scale_features, scale_target, windows_train_val_test,
 )
 from dataio.postprocess import returns_to_prices, descale
-from dataio.loading import load_stock_data
+from dataio.loading import load_stock_data_by_ticker
+
+
+def calculate_technical_indicators(df):
+    """Calculate technical indicators for a given DataFrame."""
+    if 'close' in df.columns:
+        close = df['close']
+        # SMA/EMA (20)
+        df['sma_20'] = close.rolling(window=20, min_periods=20).mean()
+        df['ema_20'] = close.ewm(span=20, adjust=False).mean()
+        # RSI(14)
+        delta = close.diff()
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+        avg_gain = gain.rolling(window=14, min_periods=14).mean()
+        avg_loss = loss.rolling(window=14, min_periods=14).mean()
+        rs = avg_gain / avg_loss.replace(0, np.nan)
+        df['rsi_14'] = 100 - (100 / (1 + rs))
+        # MACD (12,26,9)
+        ema12 = close.ewm(span=12, adjust=False).mean()
+        ema26 = close.ewm(span=26, adjust=False).mean()
+        macd = ema12 - ema26
+        signal = macd.ewm(span=9, adjust=False).mean()
+        df['macd'] = macd
+        df['macd_signal'] = signal
+        df['macd_hist'] = macd - signal
+    return df
 
 
 def prepare_data(
@@ -26,6 +54,9 @@ def prepare_data(
     use_log_returns: bool = False,
     scale: bool = True,
     cache_dir: str = 'cache',
+    use_sentiment: bool = False,
+    include_social: bool = False,
+    news_source: str = 'all',
 ) -> DataBundle:
     """
     Prepare data as validated Pydantic DataBundle.
@@ -33,8 +64,14 @@ def prepare_data(
     Returns:
         DataBundle: Validated bundle with X:(N,L,F), y:(N,K)
     """
-    # 1. Load
-    df = load_stock_data(ticker, start_date, end_date, cache_dir=cache_dir)
+    # Helper: Get target mode string for cache key
+    from schemas.bundle import TargetMode
+    target_mode_str = (TargetMode.LOG_RETURN.value if use_log_returns 
+                      else TargetMode.RETURN.value if target_as_return 
+                      else TargetMode.PRICE.value)
+    
+    # 1. Load (using ticker-based cache & date filtering for efficiency)
+    df = load_stock_data_by_ticker(ticker, start_date=start_date, end_date=end_date, cache_dir=cache_dir)
     df.columns = df.columns.str.lower()
 
     # 2. Clean
@@ -59,11 +96,53 @@ def prepare_data(
     if target_col_name not in df.columns:
         df[target_col_name] = target_series.astype(float).values
 
+    # (optional): Integrate sentiment features before split
+    if use_sentiment:
+        from utils.color_log import sentiment
+        source_desc = 'Google News + Yahoo Finance + Business Today'
+        if include_social:
+            source_desc += ' + Reddit + Google Trends'
+        sentiment(f"Integrating sentiment features (source: {source_desc if news_source == 'all' else news_source})...")
+        sentiment_cache = get_sentiment_cache()
+        df = sentiment_cache.integrate_sentiment(df, ticker, start_date, end_date, source=news_source, include_social=include_social)
+
+    print("\nFull DataFrame (tail 5):")
+    print(df.tail(5))
+    
     # 4. Split
     train_df, test_df, val_df = time_split(df, test_size=test_size, val_size=val_size)
 
-    # 5. Scale (single source of truth)
+    # 5. Calculate technical indicators separately for each split
+    train_df = calculate_technical_indicators(train_df)
+    test_df = calculate_technical_indicators(test_df)
+    if val_df is not None:
+        val_df = calculate_technical_indicators(val_df)
+
+    # 6. Scale
     features = ['close', 'high', 'low', 'open', 'volume']
+    tech_cols = [c for c in ['sma_20', 'ema_20', 'rsi_14', 'macd', 'macd_signal', 'macd_hist'] if c in train_df.columns]
+    if tech_cols:
+        features = features + tech_cols
+    # If sentiment columns exist, include ALL sentiment features dynamically
+    if use_sentiment:
+        # Dynamically detect sentiment columns (exclude base OHLCV/target/dates and technical indicators)
+        exclude_cols = set(['close','high','low','open','volume', target_col_name, 'date_only', 'date'] + tech_cols)
+        sentiment_features = [c for c in df.columns if c not in exclude_cols]
+        if sentiment_features:
+            features = features + sentiment_features
+            print(f"  Using {len(sentiment_features)} sentiment features: {sentiment_features[:5]}..." +
+                  (f" and {len(sentiment_features)-5} more" if len(sentiment_features) > 5 else ""))
+    
+    # Check for cached processed bundle now that we have features list
+    from utils.file_handling import create_bundle_cache_key, load_processed_bundle, save_processed_bundle, save_scalers
+    cache_key = create_bundle_cache_key(
+        ticker, start_date, end_date, lookback, horizon,
+        target_feature, target_mode_str, scale, use_sentiment, features
+    )
+    cached_bundle = load_processed_bundle(cache_key, cache_dir=cache_dir)
+    if cached_bundle is not None:
+        print(f"Loaded cached processed bundle (skip pipeline processing)")
+        return cached_bundle
     if scale:
         train_scaled, test_scaled, val_scaled, scalers = scale_features(
             train_df, test_df, features, val_df=val_df
@@ -74,12 +153,20 @@ def prepare_data(
         val_scaled = val_df[features].values if val_df is not None else None
         scalers = {}
 
+    # Handle NaNs after scaling to prevent network collapse as technical indicators like sma_20 has NaNs for the first few rows for rolling calculations
+    train_scaled = np.nan_to_num(train_scaled, nan=0.0, posinf=0.0, neginf=0.0)
+    test_scaled = np.nan_to_num(test_scaled, nan=0.0, posinf=0.0, neginf=0.0)
+    if val_scaled is not None:
+        val_scaled = np.nan_to_num(val_scaled, nan=0.0, posinf=0.0, neginf=0.0)
+    print("\n[Preview] Train scaled features (head 3):")
+    print(pd.DataFrame(train_scaled[:3], columns=features))
+
     # Extract target values using transformed column name
     target_train = train_df[target_col_name].to_numpy(dtype=float)
     target_test = test_df[target_col_name].to_numpy(dtype=float)
     target_val = val_df[target_col_name].to_numpy(dtype=float) if val_df is not None else None
 
-    # Scale target if using scaling (consistent scaling for all modes)
+    # Scale target if using scaling
     target_scaler = None
     if scale:
         target_train, target_test, target_val, target_scaler = scale_target(
@@ -87,7 +174,14 @@ def prepare_data(
         )
         scalers['__target__'] = target_scaler
 
-    # 6. Create windows with proper alignment (single source of truth)
+    # Ensure target data is reshaped for binary classification
+    if target_mode == TargetMode.PRICE and target_train.ndim > 1:
+        target_train = target_train[:, 0:1]
+        target_test = target_test[:, 0:1]
+        if target_val is not None:
+            target_val = target_val[:, 0:1]
+
+    # 7. Create windows with proper alignment
     X_train, y_train, X_test, y_test, X_val, y_val = windows_train_val_test(
         train_scaled, test_scaled, target_train, target_test,
         lookback=lookback, horizon=horizon,
@@ -102,7 +196,7 @@ def prepare_data(
     else:
         base_prices_val = None
 
-    # 7. Base prices for test set (use original target_feature for return→price conversion)
+    # 8. Base prices for test set (use original target_feature for return→price conversion)
     n_test_samples = X_test.shape[0]
     base_start = 0
     base_end = base_start + n_test_samples
@@ -110,7 +204,7 @@ def prepare_data(
 
     target_scaler = scalers.get("__target__", None)
 
-    # 8. Build bundle
+    # 9. Build bundle
     bundle = DataBundle(
         symbol=ticker,
         features=features,
@@ -118,6 +212,7 @@ def prepare_data(
         horizon=horizon,
         target_mode=target_mode,
         use_log_returns=use_log_returns,
+        use_sentiment=use_sentiment,
         X_train=X_train,
         y_train=y_train,
         X_test=X_test,
@@ -132,16 +227,25 @@ def prepare_data(
         train_df=train_df.copy(),
         test_df=test_df.copy(),
         val_df=val_df.copy() if val_df is not None else None,
-        target_feature=target_col_name,
+        target_feature=target_col_name
     )
-
-    print(f"  DataBundle prepared:")
-    print(f"   X_train: {bundle.X_train.shape}, y_train: {bundle.y_train.shape}")
-    if bundle.X_val is not None and bundle.y_val is not None:
-        print(f"   X_val:   {bundle.X_val.shape}, y_val: {bundle.y_val.shape}")
-    print(f"   X_test:  {bundle.X_test.shape}, y_test: {bundle.y_test.shape}")
-    print(f"   Mode: {bundle.target_mode.value}, use_log={bundle.use_log_returns}")
-
+    
+    # 10. Cache processed bundle for reuse
+    # Use cache_key already created above (line 133)
+    save_processed_bundle(bundle, cache_key, cache_dir=cache_dir)
+    print(f"Processed bundle cached: {cache_key[:80]}...")
+    
+    # 11. Cache scalers using scaler cache key
+    if scale and scalers:
+        from utils.file_handling import create_scaler_cache_key
+        scaler_cache_key = create_scaler_cache_key(
+            ticker, start_date, end_date,
+            target_feature, target_mode_str,
+            scale, use_sentiment
+        )
+        save_scalers(scalers, scaler_cache_key, cache_dir=cache_dir)
+        print(f"Scalers cached: {scaler_cache_key[:80]}...")
+    
     return bundle
 
 

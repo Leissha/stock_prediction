@@ -61,7 +61,15 @@ graph TB
         ENS[ensemble.py<br/>Weighted Average]
     end
 
+    subgraph SENTIMENT[sentiment/ - Sentiment Analysis]
+        CRAWL[crawl_news.py<br/>Google News RSS]
+        ANALYZER[sentiment_analyzer.py<br/>FinBERT]
+        CACHE[sentiment_cache.py<br/>SentimentCache]
+    end
+
     subgraph EVAL[eval/ - Evaluation]
+        REGRESSION[regression_evaluator.py<br/>RegressionEvaluator]
+        CLASSIFICATION[classification_evaluator.py<br/>ClassificationEvaluator]
         METRICS[metrics.py<br/>MAE, RMSE, DA]
     end
 
@@ -106,6 +114,13 @@ graph LR
         SPLIT[time_split<br/>train/test chronological]
     end
 
+    subgraph Stage2b[Stage 2.5: Sentiment]
+        NEWS[get_stock_news<br/>Google News RSS + cache]
+        FINBERT[FinBERT analyze<br/>ProsusAI/finbert]
+        AGG[aggregate daily<br/>sentiment_mean/news_count]
+        MERGE[merge into df<br/>pre-split]
+    end
+
     subgraph Stage3[Stage 3: Scale]
         SCALE[scale_features<br/>StandardScaler per-feature]
     end
@@ -127,6 +142,11 @@ graph LR
     RAW --> LOAD
     LOAD --> CLEAN
     CLEAN --> TARGET
+    TARGET --> NEWS
+    NEWS --> FINBERT
+    FINBERT --> AGG
+    AGG --> MERGE
+    MERGE --> SPLIT
     TARGET --> SPLIT
     SPLIT --> SCALE
     SCALE --> WINDOW
@@ -272,6 +292,81 @@ prices = returns_to_prices(returns, base, mode="return")
 
 ---
 
+### eval/regression_evaluator.py
+
+#### `RegressionEvaluator`
+- **Purpose**: Centralized regression model evaluation
+- **Input**: DataBundle, model predictions, configuration
+- **Output**: Metrics, plots, CSV results
+- **Features**:
+  - Price space conversion
+  - Comprehensive metrics (MAE, RMSE, DA)
+  - Prediction plots
+  - Sentiment visualization (if enabled)
+
+#### `run_regression_evaluation(args, bundle, model, meta_path)`
+- **Purpose**: Single entry point for regression evaluation
+- **Process**: 
+  1. Generate predictions
+  2. Convert to price space
+  3. Calculate metrics
+  4. Create plots
+  5. Save results
+
+---
+
+### eval/classification_evaluator.py
+
+#### `ClassificationEvaluator`
+- **Purpose**: Binary classification evaluation with ablation study
+- **Input**: Ticker, date range, sentiment flag, configuration
+- **Output**: Classification metrics, confusion matrices, ablation results
+- **Features**:
+  - Multiple models (LSTM, Logistic Regression, Random Forest, SVM)
+  - Baseline comparison (with/without sentiment)
+  - Comprehensive metrics (accuracy, precision, recall, F1)
+  - Visualization plots
+
+#### `run_classification_evaluation(ticker, start_date, end_date, use_sentiment, scale, test_size, val_size)`
+- **Purpose**: Single entry point for classification evaluation
+- **Process**:
+  1. Prepare data using main pipeline
+  2. Train multiple classification models
+  3. Run ablation study
+  4. Generate plots and save results
+
+---
+
+### sentiment/sentiment_cache.py
+
+#### `SentimentCache`
+- **Purpose**: Simplified sentiment analysis and caching
+- **Features**:
+  - News fetching with Google RSS
+  - FinBERT sentiment analysis
+  - Intelligent caching (append-only)
+  - Daily sentiment aggregation
+  - Integration with stock data
+
+#### `get_news_with_sentiment(ticker, start_date, end_date) -> DataFrame`
+- **Purpose**: Get news with sentiment analysis
+- **Process**:
+  1. Check existing cache
+  2. Fetch missing articles
+  3. Analyze sentiment for new articles
+  4. Cache results
+- **Output**: DataFrame with news and sentiment scores
+
+#### `integrate_sentiment(df, ticker, start_date, end_date) -> DataFrame`
+- **Purpose**: Integrate sentiment features into stock data
+- **Process**:
+  1. Get daily sentiment aggregation
+  2. Merge with stock data
+  3. Forward-fill missing values
+- **Output**: DataFrame with sentiment features added
+
+---
+
 ### dataio/loading.py
 
 #### `load_stock_data(company, start_date, end_date, cache_dir='cache/raw_data') -> DataFrame`
@@ -397,6 +492,7 @@ sequenceDiagram
     participant PL as pipeline.py
     participant LD as loading.load_stock_data
     participant CV as converters
+    participant SN as sentiment_cache
     participant SC as DataBundle
     participant M as Model
     participant PP as postprocess
@@ -413,6 +509,10 @@ sequenceDiagram
     PL->>CV: build_target(df, col, mode, use_log)
     CV-->>PL: (target_series, target_name)
     PL->>PL: align df to target.index
+
+    Note over PL,SN: Stage 2.5: Sentiment (optional)
+    PL->>SN: integrate_sentiment(df, ticker, start, end)
+    SN-->>PL: df_with_daily_sentiment
 
     Note over PL,CV: Stage 3: Split & Scale
     PL->>CV: time_split(df, test_size=0.2)
@@ -675,22 +775,188 @@ cache/
 
 ---
 
+## Available Models Summary
+
+### Deep Learning Models (TensorFlow/Keras)
+1. **LSTM** (Long Short-Term Memory)
+   - Best for: Capturing long-term dependencies in sequential data
+   - Architecture: Stacked LSTM layers with dropout regularization
+   - Use case: General-purpose time series prediction
+
+2. **BiLSTM** (Bidirectional LSTM)
+   - Best for: Learning patterns from both past and future context
+   - Architecture: Bidirectional LSTM layers
+   - Use case: When full sequence context improves predictions
+
+3. **GRU** (Gated Recurrent Unit)
+   - Best for: Faster training with similar performance to LSTM
+   - Architecture: Stacked GRU layers with dropout
+   - Use case: Resource-constrained environments
+
+4. **RNN** (Simple Recurrent Neural Network)
+   - Best for: Baseline comparison and simple patterns
+   - Architecture: Stacked SimpleRNN layers
+   - Use case: Quick prototyping and baseline models
+
+5. **CNN-LSTM Hybrid Models**
+   - Variants: `cnn_lstm`, `cnn_gru`, `cnn_rnn`, `cnn_bilstm`
+   - Best for: Extracting spatial features before temporal modeling
+   - Architecture: Conv1D layers → RNN layers → Dense layers
+   - Use case: When local patterns in features are important
+
+6. **Attention-based Models**
+   - Variants: `attention_lstm`, `attention_gru`, `attention_rnn`, `attention_bilstm`
+   - Best for: Focusing on most relevant time steps
+   - Architecture: RNN encoder → Multi-head self-attention → Dense layers
+   - Use case: When certain time steps (e.g., earnings) are more important
+
+### Statistical Models
+7. **SARIMAX** (Seasonal AutoRegressive Integrated Moving Average with eXogenous variables)
+   - Best for: Univariate time series with seasonal patterns
+   - Architecture: ARIMA with seasonal components
+   - Use case: Traditional statistical baseline, interpretable forecasts
+
+### Ensemble Models
+8. **SARIMAX + Deep Learning Ensemble**
+   - Best for: Combining statistical and neural approaches
+   - Architecture: Weighted average of SARIMAX and any TF model
+   - Configuration: `--model_name ensemble --ensemble_2 <lstm|gru|rnn|bilstm>`
+   - Use case: Leveraging strengths of both paradigms
+
+### Classification Models
+9. **Binary Classification Models**
+   - Time Series: LSTM, GRU, RNN, BiLSTM with BCE loss
+   - Traditional ML: Logistic Regression, Random Forest, SVM
+   - Task: Predict up/down movement (binary classification)
+   - Approach: Two methods available:
+     - BCE-based: Direct binary classification with optimal threshold tuning
+     - Price comparison: Regression prediction converted to binary via price comparison
+
+## Extension C.7: Sentiment Analysis Integration
+
+### Overview
+The sentiment analysis extension integrates financial news sentiment as additional features to improve stock price predictions. This addresses the limitation that traditional time series models only use historical price data, ignoring market sentiment and news events.
+
+### Architecture
+
+#### Components
+1. **News Crawling** ([sentiment/crawl_news.py](dev/sentiment/crawl_news.py))
+   - Google News RSS feed integration
+   - Yahoo Finance news API
+   - Business Today India news
+   - Reddit financial subreddits (optional with `--include_social`)
+   - Google Trends data (optional with `--include_social`)
+   - Date-filtered article fetching
+   - Deduplication by URL and (title, date)
+
+2. **Sentiment Analysis** ([sentiment/sentiment_analyzer.py](dev/sentiment/sentiment_analyzer.py))
+   - Model: FinBERT (ProsusAI/finbert) - domain-specific BERT for financial text
+   - Output: Sentiment scores [-1 to +1] and labels [positive/negative/neutral]
+   - Batch processing for efficiency
+   - GPU acceleration support
+
+3. **Sentiment Cache** ([sentiment/sentiment_cache.py](dev/sentiment/sentiment_cache.py))
+   - Intelligent append-only caching per ticker
+   - Cache path: `cache/sentiment/{TICKER}_news.csv`
+   - Only fetches missing date ranges
+   - Automatic cache validation and coverage checks
+
+#### Data Flow Integration
+```
+Raw News Articles
+    ↓
+FinBERT Analysis (ProsusAI/finbert)
+    ↓
+Daily Sentiment Aggregation (7 features)
+    ├─ sentiment_mean: Daily average sentiment
+    ├─ news_count: Number of articles per day
+    ├─ sentiment_roll3: 3-day rolling average
+    ├─ sentiment_roll7: 7-day rolling average
+    ├─ sentiment_lag1: Previous day sentiment
+    ├─ sentiment_momentum3: 3-day trend direction
+    └─ (sentiment features merged BEFORE train/test split)
+    ↓
+Merge with Stock Data (time-aware)
+    ↓
+Train/Test Split (prevents data leakage)
+    ↓
+Model Training with Sentiment Features
+```
+
+#### Temporal Alignment Strategy
+- News grouped by calendar date (date_only)
+- Left join with stock data (preserves all trading days)
+- Forward-fill sentiment for days without news (no backward fill to prevent leakage)
+- Remaining NaNs filled with 0 (neutral sentiment)
+
+### Implementation Details
+
+#### Feature Engineering
+7 temporal sentiment features designed to capture:
+1. **Baseline**: Daily mean sentiment, news volume
+2. **Short-term trend**: 3-day rolling average
+3. **Medium-term trend**: 7-day rolling average
+4. **Lag**: Previous day sentiment (temporal dependency)
+5. **Momentum**: 3-day cumulative change (trend direction)
+
+#### Usage
+```bash
+# Enable sentiment features
+python main.py --use_sentiment --company AAPL
+
+# Include social media data
+python main.py --use_sentiment --include_social --company AAPL
+
+# Classification with sentiment ablation study
+python main.py --classification --use_sentiment --company AAPL
+```
+
+#### Results and Impact
+- **Classification Evaluator**: Automatic ablation study comparing models with/without sentiment
+- **Metrics**: Accuracy, Precision, Recall, F1-Score comparison
+- **Visualization**:
+  - Sentiment vs price overlay plots
+  - Sentiment impact analysis charts
+  - Confusion matrices with/without sentiment
+
+### Technical Advantages
+1. **Domain-Specific**: FinBERT trained on financial text (10K reports, earnings calls)
+2. **Efficient Caching**: Only fetches missing data, append-only strategy
+3. **No Data Leakage**: Sentiment merged before split, forward-fill only
+4. **Rich Features**: 7 engineered features capture temporal patterns
+5. **Flexibility**: Works with all model types (LSTM, GRU, RNN, SARIMAX, Ensemble)
+6. **Evaluation**: Built-in ablation study for classification tasks
+
+### Performance Considerations
+- **Cache Size**: ~1MB per 1000 articles
+- **FinBERT Inference**: ~50ms per article on CPU, ~5ms on GPU
+- **Social Media**: Reddit adds ~500-1000 posts/ticker, increases fetch time by ~30s
+
 ## References
 
 ### Key Files
-- [pipeline.py](../pipeline.py) - Main orchestration
-- [dataio/converters.py](../dataio/converters.py) - Preprocessing
-- [dataio/postprocess.py](../dataio/postprocess.py) - Postprocessing
-- [schemas/bundle.py](../schemas/bundle.py) - Data contract
-- [model/tf_models.py](../model/tf_models.py) - TensorFlow models
-- [model/sarimax.py](../model/sarimax.py) - SARIMAX model
-- [model/ensemble.py](../model/ensemble.py) - Ensemble model
+- [main.py](dev/main.py) - CLI interface and orchestration
+- [pipeline.py](dev/pipeline.py) - Main data pipeline
+- [dataio/converters.py](dev/dataio/converters.py) - Preprocessing
+- [dataio/postprocess.py](dev/dataio/postprocess.py) - Postprocessing
+- [schemas/bundle.py](dev/schemas/bundle.py) - Data contract
+- [model/tf_models.py](dev/model/tf_models.py) - TensorFlow models (9 variants)
+- [model/sarimax.py](dev/model/sarimax.py) - SARIMAX model
+- [model/ensemble.py](dev/model/ensemble.py) - Ensemble model
+- [eval/regression_evaluator.py](dev/eval/regression_evaluator.py) - Regression evaluation
+- [eval/classification_evaluator.py](dev/eval/classification_evaluator.py) - Classification evaluation
+- [sentiment/sentiment_cache.py](dev/sentiment/sentiment_cache.py) - Sentiment management
+- [sentiment/sentiment_analyzer.py](dev/sentiment/sentiment_analyzer.py) - FinBERT integration
+- [sentiment/crawl_news.py](dev/sentiment/crawl_news.py) - News fetching
 
 ### External Dependencies
 - **yfinance**: Yahoo Finance data download
 - **pandas**: DataFrame operations
 - **numpy**: Array operations
-- **scikit-learn**: StandardScaler, metrics
+- **scikit-learn**: StandardScaler, metrics, classification models
 - **tensorflow/keras**: Deep learning models
 - **statsmodels**: SARIMAX implementation
 - **pydantic**: Data validation
+- **transformers**: FinBERT model (ProsusAI/finbert)
+- **torch**: PyTorch backend for FinBERT
+- **requests**: HTTP requests for news fetching

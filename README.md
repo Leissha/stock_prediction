@@ -1,7 +1,8 @@
 # Stock Prediction Project - COS30018 Option C
 
 ## Project Overview
-This project demonstrates a stock prediction system and comparing multiple AI Models approaches for stock forecasting
+This project demonstrates a comprehensive stock prediction system with sentiment analysis, multiple AI models, and classification capabilities for academic research.
+
 ## Quick Start
 
 ### 1. Environment Setup
@@ -15,10 +16,26 @@ source venv/bin/activate  # Linux/Mac
 pip install -r requirements.txt
 ```
 
+### 2. Navigate to Development Directory
+```bash
+cd dev
+```
+
+### 3. Run Basic Examples
+```bash
+# Basic LSTM prediction
+python main.py --company AAPL --use_sentiment
+
+# Classification with sentiment analysis
+python main.py --classification --use_sentiment --company AAPL
+
+# Ensemble model
+python main.py --model_name ensemble --ensemble_2 rnn --use_sentiment
+```
+
 ## Usage Examples
 
 ---
-
 
 #### Basic Usage (Default Settings)
 ```bash
@@ -94,6 +111,41 @@ python main.py \
 - **Postprocess & metrics**: `dev/dataio/postprocess.py`, `dev/eval/metrics.py`
 - **Caching**: raw data, models, results under `dev/cache` and `dev/results`
 
+#### Classification Mode
+```bash
+# Binary classification (up/down prediction)
+python main.py --classification --use_sentiment --company AAPL
+
+# Classification with different models
+python main.py --classification --use_sentiment --company TSLA --scale
+```
+
+### Sentiment Integration
+
+Sentiment from Google News RSS is integrated before the split and used as extra features.
+
+Flags and behavior:
+
+```bash
+# Add FinBERT sentiment features (daily aggregation merged into stock df)
+python main.py --use_sentiment
+
+# Typical combined run (log returns + sentiment)
+python main.py --company AAPL --log_ret --use_sentiment
+```
+
+Details:
+- Source: Google News RSS (`company OR ticker` + date window)
+- Caching: append-only CSV per ticker under `dev/cache/sentiment/{TICKER}_news.csv`
+  - Only missing edge ranges are fetched; otherwise cached window is used
+  - Deduplication by `url`, then `(title,date)`; dates normalized to daily
+- Analyzer: FinBERT (`ProsusAI/finbert`) via `transformers/torch`
+- Daily features: `sentiment_mean`, `news_count`
+- Missing days: time-aware interpolation then fill 0
+- Plot: unified train/val/test price vs smoothed sentiment saved to `results/{meta}_sentiment_vs_price_splits.png`
+
+Note on instruments: for Australian tickers, include exchange suffix (e.g., `CBA.AX`).
+
 #### SARIMA & Ensemble
 ```bash
 # SARIMA (univariate target)
@@ -141,15 +193,16 @@ python main.py --model_name ensemble --ensemble_2 gru --lookback 60 --horizon 5 
 ## Output Files
 
 - **Model**: `cache/trained_models/*.keras`
-- **Plots**: training curves `cache/trained_models/{meta}_training.png`, predictions `results/{meta}_predictions.png`
+- **Plots**: training curves `cache/trained_models/{meta}_training.png`, predictions `results/{meta}_predictions.png`, unified sentiment overlay `results/{meta}_sentiment_vs_price_splits.png`
 - **Cache**: `cache/processed_data/*.pkl` and `cache/raw_data/*.pkl`
 - **Results**: `results/{some_config}.csv`
 
 ## Project Structure
 ```
 stock-prediction-project/
-├── dev/                    # Advanced development module
+├── dev/                    # Main development module
 │   ├── main.py             # CLI interface and orchestration
+│   ├── pipeline.py         # Core data processing pipeline
 │   ├── model/              # AI Model architectures
 │   │   ├── tf_models.py    # TensorFlow models (LSTM, BiLSTM, GRU, RNN)
 │   │   ├── sarimax.py      # SARIMAX univariate model
@@ -159,33 +212,59 @@ stock-prediction-project/
 │   │   ├── converters.py   # clean_data, build_target, time_split, scale_features, windows_*
 │   │   └── postprocess.py  # descale, returns_to_prices, align_predictions
 │   ├── eval/               # Evaluation
+│   │   ├── regression_evaluator.py  # RegressionEvaluator class
+│   │   ├── classification_evaluator.py  # ClassificationEvaluator class
 │   │   └── metrics.py      # MAE, RMSE, DA
+│   ├── sentiment/          # Sentiment Analysis
+│   │   ├── crawl_news.py   # Google News RSS fetching
+│   │   ├── sentiment_analyzer.py  # FinBERT sentiment analysis
+│   │   └── sentiment_cache.py  # SentimentCache class
 │   ├── schemas/            # Data contract
 │   │   └── bundle.py       # DataBundle (Pydantic)
 │   ├── config/             # Configuration files
-│   │   └── data.py         # Central defaults & date helpers
+│   │   ├── data.py         # Central defaults & date helpers
+│   │   └── pipeline_config.py  # Pipeline configuration management
+│   ├── utils/              # Utilities
+│   │   ├── plots.py        # Plotting utilities
+│   │   └── file_handling.py  # File operations
 │   ├── cache/              # Cache processed data & models
 │   │   ├── raw_data/       # Cached raw stock data
 │   │   ├── processed_data/ # Cached processed sequences
 │   │   ├── scalers/        # Cached feature scalers
+│   │   ├── sentiment/      # Cached news and sentiment data
 │   │   └── trained_models/ # Saved model files
-│   └── results/            # Output files (CSV & plots)
-├── requirements.txt        # Package dependencies
+│   ├── results/            # Output files (CSV & plots)
+│   ├── streamlit/          # Optional web dashboard
+│   ├── backend/            # Optional API backend
+│   └── requirements.txt    # Package dependencies
+├── requirements.txt        # Root package dependencies
 └── README.md               # This file
 ```
 
 ## Architecture & Data Contracts
 
-- `DataBundle` enforces shapes and metadata:
+### Core Components
+- **`DataBundle`**: Pydantic model enforcing shapes and metadata:
   - `X_train/X_val/X_test`: `(N, L, F)`, `y_*`: `(N, K)`
   - `lookback=L`, `horizon=K`, `target_mode` in {price, return, log_return}
   - Optional `train_df/test_df/val_df` for SARIMA, `base_prices_*` for price conversion
-- Preprocessing single source of truth in `dataio.converters`:
+
+### Data Processing Pipeline
+- **Preprocessing**: Single source of truth in `dataio.converters`:
   - `clean_data()`, `build_target()`, `time_split()`, `scale_features()`, `windows_train_test()`, `windows_train_val_test()`
-- Postprocessing in `dataio.postprocess`:
+- **Postprocessing**: In `dataio.postprocess`:
   - `descale()`, `returns_to_prices()`, `align_predictions()`; `predictions_to_prices()` used in pipeline
-- Models implement only `fit()` and `predict()`; no internal scaling or metrics
-- Ensemble does weighted average after strict shape validation
+
+### Model Architecture
+- **Models**: Implement only `fit()` and `predict()`; no internal scaling or metrics
+- **Ensemble**: Weighted average after strict shape validation
+- **Evaluation**: Centralized evaluators for regression and classification
+
+### Sentiment Integration
+- **`SentimentCache`**: Simplified sentiment analysis and caching
+- **Features**: `sentiment_mean`, `news_count` (daily aggregation)
+- **Caching**: Intelligent append-only CSV caching per ticker
+- **Integration**: Pre-split sentiment feature merging
 
 ## Requirements
 | Category | Package | Version | Purpose |
@@ -195,16 +274,26 @@ stock-prediction-project/
 | | scikit-learn | ≥1.7.1 | Machine learning utilities |
 | | numpy | ≥2.1.3 | Numerical computing |
 | | pandas | ≥2.3.1 | Data manipulation |
+| **Sentiment** | transformers | ≥4.40.0 | FinBERT sentiment analysis |
+| | torch | ≥2.0.0 | PyTorch backend |
 | **Visualization** | matplotlib | ≥3.10.5 | Plotting library |
+| | seaborn | ≥0.13.0 | Statistical plotting |
 | **Data Fetching** | yfinance | ≥0.2.65 | Yahoo Finance data |
-| **Utilities** | requests | ≥2.32.4 | HTTP library |
-| | loguru | ≥0.7.0 | Logging |
+| | requests | ≥2.32.4 | HTTP library |
+| **Utilities** | loguru | ≥0.7.0 | Logging |
+| | pydantic | ≥2.0.0 | Data validation |
+| **Optional** | streamlit | ≥1.28.0 | Web dashboard |
+| | fastapi | ≥0.100.0 | API backend |
+| | uvicorn | ≥0.23.0 | ASGI server |
 
 ## Troubleshooting
 
 ### Common Issues
 1. **Import Errors**: Make sure virtual environment is activated
 2. **Data Download Issues**: Check internet connection and yfinance availability
+3. **Ticker Suffixes**: Some exchanges require suffixes (e.g., `CBA.AX`). Using `CBA` will fetch a different US-listed instrument with small price levels.
+4. **News Cache Messages**: "Fetching news..." logs indicate the pipeline step; verbose crawler logs will state whether cache was used or new articles were appended. Cache lives in `dev/cache/sentiment/`.
+5. **Returns vs Prices in Plots**: If a plot shows decimal “prices”, it means a return series was picked. We now guard against this; ensure your DataFrame carries the `close` price column (log returns are stored in `close_log_return`).
 3. **Memory Issues**: Reduce `prediction_days` or use smaller datasets
 4. **Model Training**: Ensure sufficient data for the specified lookback period
 
@@ -220,8 +309,157 @@ stock-prediction-project/
 - ✅ **Task 4 Complete**: Feature engineering, trading metrics, comprehensive evaluation
 - ✅ **Task 5 Complete**: Multivariate & multistep prediction implementation
 - ✅ **Task 6 Complete**: Ensemble model implementation
+- ✅ **Task 7 Complete**: Sentiment analysis integration with FinBERT
+
+### Current Features
+- **5 Execution Modes**: Sentiment, TF Models, SARIMAX, Classification, Ensemble
+- **Sentiment Analysis**: FinBERT integration with intelligent caching
+- **13 Model Variants**:
+  - Base RNN: LSTM, GRU, RNN, BiLSTM
+  - CNN Hybrid: CNN-LSTM, CNN-GRU, CNN-RNN, CNN-BiLSTM
+  - Attention: Attention-LSTM, Attention-GRU, Attention-RNN, Attention-BiLSTM
+  - Statistical: SARIMAX
+  - Ensemble: SARIMAX + any TF model
+- **Classification**: Binary up/down prediction with ablation study (with/without sentiment)
+- **Multiple ML Models**: Logistic Regression, Random Forest, SVM for classification
+- **Comprehensive Evaluation**: Regression and classification evaluators with ablation studies
+- **Visualization**: Prediction plots, sentiment overlays, confusion matrices, training curves
+- **Caching**: Multi-level caching (raw data, processed data, scalers, models, sentiment)
+
+## Complete Model Catalog
+
+### 1. Deep Learning Models (via TFModel)
+All TensorFlow models support:
+- Multi-step forecasting (`--horizon N`)
+- Binary classification (`--classification`)
+- Configurable architecture (`--layers 64 32 16`)
+- Dropout regularization (`--dropout_rate 0.2`)
+- Multiple optimizers (`--optimizer adam|rmsprop|sgd`)
+- Early stopping with validation split (`--val_size 0.1`)
+
+#### Base RNN Models
+| Model | Command | Best For | Training Speed |
+|-------|---------|----------|----------------|
+| LSTM | `--model_name lstm` | General purpose, long-term dependencies | Medium |
+| BiLSTM | `--model_name bilstm` | Full sequence context, bidirectional patterns | Slow |
+| GRU | `--model_name gru` | Faster alternative to LSTM | Fast |
+| RNN | `--model_name rnn` | Simple patterns, baseline | Very Fast |
+
+#### CNN Hybrid Models
+Combine Conv1D layers for spatial feature extraction with RNN for temporal modeling.
+
+| Model | Command | Best For |
+|-------|---------|----------|
+| CNN-LSTM | `--model_name cnn_lstm` | Local patterns + long-term memory |
+| CNN-GRU | `--model_name cnn_gru` | Local patterns + faster training |
+| CNN-RNN | `--model_name cnn_rnn` | Local patterns + simple baseline |
+| CNN-BiLSTM | `--model_name cnn_bilstm` | Local patterns + bidirectional context |
+
+#### Attention Models
+Use multi-head self-attention to focus on important time steps (e.g., earnings announcements).
+
+| Model | Command | Best For |
+|-------|---------|----------|
+| Attention-LSTM | `--model_name attention_lstm` | Focus on key events + long memory |
+| Attention-GRU | `--model_name attention_gru` | Focus on key events + faster |
+| Attention-RNN | `--model_name attention_rnn` | Focus on key events + simple |
+| Attention-BiLSTM | `--model_name attention_bilstm` | Focus on key events + bidirectional |
+
+**Attention Configuration:**
+- `--attn_heads 4`: Number of attention heads (default: 4)
+- `--attn_key_dim 16`: Key dimension per head (default: 16)
+
+### 2. Statistical Models
+
+#### SARIMAX
+Traditional time series model with seasonal components.
+
+```bash
+# Basic SARIMAX
+python main.py --model_name sarimax --lookback 60 --horizon 5
+
+# With seasonal components
+python main.py --model_name sarimax --sarimax_seasonal --sarimax_m 5
+```
+
+**Parameters:**
+- `--sarimax_seasonal`: Enable seasonal components
+- `--sarimax_m 5`: Seasonal period (e.g., 5 for weekly patterns)
+
+### 3. Ensemble Models
+
+Weighted combination of SARIMAX (statistical) and any TF model (neural).
+
+```bash
+# SARIMAX + GRU ensemble (equal weights)
+python main.py --model_name ensemble --ensemble_2 gru \
+  --sarima_weight 0.5 --model_2_weight 0.5
+
+# SARIMAX + BiLSTM ensemble (favor neural)
+python main.py --model_name ensemble --ensemble_2 bilstm \
+  --sarima_weight 0.3 --model_2_weight 0.7
+```
+
+**Parameters:**
+- `--ensemble_2 <lstm|gru|rnn|bilstm>`: Choose TF model for ensemble
+- `--sarima_weight 0.5`: Weight for SARIMAX predictions
+- `--model_2_weight 0.5`: Weight for TF model predictions
+
+### 4. Classification Models
+
+Binary up/down prediction with multiple models and ablation study.
+
+```bash
+# LSTM classification with sentiment analysis
+python main.py --classification --use_sentiment --model_name lstm
+
+# Compare multiple classifiers
+python main.py --classification --use_sentiment
+```
+
+**Models Trained:**
+1. Time Series: LSTM (or specified model)
+2. Logistic Regression (with class balancing)
+3. Random Forest (with class balancing)
+4. SVM (with class balancing)
+
+**Automatic Ablation Study:**
+- Trains baseline model without sentiment
+- Compares performance with/without sentiment features
+- Generates impact analysis plots
+
+**Classification Approaches:**
+- Default: Direct binary classification with BCE loss + optimal threshold tuning
+- Alternative: `--use_price_comparison` trains regression, converts to binary via price comparison
+
+## Model Selection Guide
+
+### For Best Accuracy (regardless of compute)
+1. **BiLSTM** or **Attention-BiLSTM** with sentiment
+2. **CNN-BiLSTM** if local patterns matter
+3. **Ensemble** (SARIMAX + BiLSTM) for robustness
+
+### For Fastest Training
+1. **GRU** - fastest neural model
+2. **RNN** - simplest baseline
+3. **SARIMAX** - no neural training needed
+
+### For Interpretability
+1. **SARIMAX** - traditional statistical model with interpretable coefficients
+2. **Attention models** - visualize which time steps matter most
+
+### For Resource-Constrained Environments
+1. **GRU** or **RNN**
+2. Use smaller `--layers 32 16` architecture
+3. Reduce `--epochs 25` for faster training
+
+### For Research/Experimentation
+1. **Attention models** - investigate what the model learns
+2. **Ensemble** - compare statistical vs neural approaches
+3. **Classification with ablation** - measure sentiment impact quantitatively
 
 ---
 
-**Last Updated**: 11 October, 2025  
+**Last Updated**: November 2, 2025
 **Course**: COS30018 Option C
+**Total Models**: 13 variants (4 base RNN + 4 CNN hybrid + 4 attention + 1 statistical + ensemble)

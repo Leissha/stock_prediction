@@ -68,7 +68,7 @@ class SARIMAXModel:
         
         # Use statsforecast.AutoARIMA for fast parameter selection
         y_series = pd.Series(target_series, name='y')
-        
+
         # Auto-select order/seasonal_order via statsforecast.AutoARIMA
         auto_arima = AutoARIMA(
             season_length=self.m if self.seasonal else 1,

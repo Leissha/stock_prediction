@@ -1,4 +1,5 @@
 from typing import List, Optional, Dict, Any
+import pandas as pd
 from enum import Enum
 import numpy as np
 from pydantic import BaseModel, Field, ConfigDict, model_validator
@@ -34,6 +35,9 @@ class DataBundle(BaseModel):
     scalers: Dict[str, Any] = Field(default_factory=dict)
     target_scaler: Optional[Any] = None
     base_prices_test: Optional[NDArray] = None
+
+    # Sentiment integration (optional)
+    use_sentiment: bool = False
 
     # Optional fields for SARIMAX (original DataFrames before sequencing)
     train_df: Optional[Any] = None  # pd.DataFrame
@@ -143,6 +147,20 @@ class DataBundle(BaseModel):
 
     def summary(self) -> str:
         val_info = f"  Val  : X{self.X_val.shape} → y{self.y_val.shape}\n" if self.X_val is not None and self.y_val is not None else ""
+        
+        # Target value debug info
+        y_train_sample = self.y_train[:5].flatten() if len(self.y_train) >= 5 else self.y_train.flatten()
+        y_test_sample = self.y_test[:5].flatten() if len(self.y_test) >= 5 else self.y_test.flatten()
+        
+        debug_info = (
+            f"  Target Debug:\n"
+            f"    y_train: shape{y_train_sample.shape}, range[{self.y_train.min():.6f}, {self.y_train.max():.6f}]\n"
+            f"    y_test:  shape{y_test_sample.shape}, range[{self.y_test.min():.6f}, {self.y_test.max():.6f}]\n"
+            f"    sample_train: {y_train_sample}\n"
+            f"    sample_test:  {y_test_sample}\n"
+            f"    scaler: {self.target_scaler is not None}\n"
+        )
+        
         return (
             f"DataBundle[{self.symbol}]\n"
             f"  Train: X{self.X_train.shape} → y{self.y_train.shape}\n"
@@ -150,4 +168,5 @@ class DataBundle(BaseModel):
             f"  Test : X{self.X_test.shape} → y{self.y_test.shape}\n"
             f"  Mode : {self.target_mode.value} (log={self.use_log_returns})\n"
             f"  Feats: {len(self.features)} -> {', '.join(self.features)}\n"
+            f"{debug_info}"
         )

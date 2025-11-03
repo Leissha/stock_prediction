@@ -112,3 +112,11 @@ coverage.xml
 dmypy.json
 
 docs/
+
+# prod
+backend/
+streamlit/
+database/
+docker-compose.yml
+test/
+tests/

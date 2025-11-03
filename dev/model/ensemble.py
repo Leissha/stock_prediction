@@ -109,6 +109,8 @@ class EnsembleModel:
             layers=model_2_args.get('layers'),
             dropout_rate=float(model_2_args.get('dropout_rate', 0.2)),
             output_steps=bundle.horizon,
+            attn_heads=int(model_2_args.get('attn_heads', 4)),
+            attn_key_dim=int(model_2_args.get('attn_key_dim', 16)),
         )
         model_2_model_path = f"cache/trained_models/{model_2_meta_path}.keras"
         if not os.path.exists(model_2_model_path):

@@ -103,6 +103,12 @@ def time_split(
     Returns:
         (train_df, test_df, val_df) - val_df is None if val_size=0
 
+    Note on alignment:
+        The last `lookback` rows of train will be used as context for val/test
+        in the windowing step. This is NOT data leakage - the model sees these
+        rows during training, and they're only used to provide historical context
+        for predicting future validation/test targets.
+
     Shape:
         Input: (M, C)
         Output: train:(T,C), test:(Te,C), val:(V,C) where T+Te+V=M
